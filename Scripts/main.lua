@@ -11,7 +11,9 @@ local OCCLUSION_START   = 0.5       -- below: no blend
 local OCCLUSION_FULL    = 1.0       -- at/above: full TARGET_TOD blend
 local PASS_MS           = 100       -- poll interval (ms)
 local DEBUG             = false
-local MOD_BUILD         = "v3.2.1"  -- boot banner — confirm this string in UE4SS.log after reload
+local MOD_BUILD         = "v3.2.2"  -- boot banner — confirm this string in UE4SS.log after reload
+local STARTUP_WARMUP_POLLS = 30     -- skip sky writes ~3s after load (UDS/player init)
+local INDOOR_REFRESH_POLLS = 20     -- light numeric refresh every ~2s while indoor (no SetSettings)
 
 -- Discovery mode (Slice 1): read-only UDS instrumentation; no sky writes.
 local DISCOVERY_MODE    = false
@@ -262,6 +264,8 @@ local playerControllerCache = nil
 local snapshotCount = 0
 local lastAppliedMode = nil   -- nil | "outdoor" | "indoor_day" | "indoor_night"
 local gateUnavailableLogged = false
+local startupPolls = 0
+local indoorRefreshPolls = 0
 
 -- ---- helpers ---------------------------------------------------------------
 local function log(msg)
@@ -1063,6 +1067,15 @@ local function neutralizeIndoorStacking(uds)
     end
 end
 
+local function refreshIndoorDayWrites(uds)
+    for _, name in ipairs(G1R_SKY_MULTIPLIER_FIELDS) do
+        writeNumericField(uds, name, G1R_SKY_MULTIPLIER_TARGET)
+    end
+    for _, entry in ipairs(G1R_DIRECT_INDOOR_DAY_WRITES) do
+        writeNumericField(uds, entry.name, entry.target)
+    end
+end
+
 local function applyIndoorProfile(uds, gameNight)
     if not uds then return false end
     if gameNight then
@@ -1422,6 +1435,9 @@ local function pass()
     if DISCOVERY_MODE then return end
     if not modEnabled then return end
 
+    startupPolls = startupPolls + 1
+    if startupPolls < STARTUP_WARMUP_POLLS then return end
+
     local uds = findUds()
     if not uds then return end
 
@@ -1447,12 +1463,23 @@ local function pass()
     local modeChanged = mode ~= lastAppliedMode
 
     if mode == "outdoor" then
+        indoorRefreshPolls = 0
         if not modeChanged then return end
         applyDayRestore(uds)
     elseif mode == "indoor_night" then
-        applyIndoorProfile(uds, true)
+        indoorRefreshPolls = indoorRefreshPolls + 1
+        if modeChanged or indoorRefreshPolls >= INDOOR_REFRESH_POLLS then
+            applyIndoorProfile(uds, true)
+            indoorRefreshPolls = 0
+        end
     else
-        applyIndoorProfile(uds, false)
+        indoorRefreshPolls = indoorRefreshPolls + 1
+        if modeChanged or indoorRefreshPolls >= INDOOR_REFRESH_POLLS then
+            applyIndoorProfile(uds, false)
+            indoorRefreshPolls = 0
+        elseif indoorRefreshPolls % 5 == 0 then
+            refreshIndoorDayWrites(uds)
+        end
     end
 
     if modeChanged then
@@ -1466,6 +1493,7 @@ local function setModEnabled(next)
     modEnabled = next
     if not modEnabled then
         lastAppliedMode = nil
+        indoorRefreshPolls = 0
         local uds = findUds()
         if uds then
             applyDayRestore(uds)
