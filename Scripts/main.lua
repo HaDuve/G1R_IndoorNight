@@ -13,6 +13,9 @@ local PASS_MS           = 100       -- poll interval (ms)
 -- Slice 6b: Sky Transition enter — linear lerp of allowed levers after Gate Stability arms.
 local TRANSITION_ENTER_MS = 4000
 local TRANSITION_ENTER_POLLS = math.max(1, math.floor(TRANSITION_ENTER_MS / PASS_MS))
+-- Slice 6c: fast revert on gate flip during enter — shorter linear blend back to Last Stable Profile.
+local TRANSITION_REVERT_MS = 1000
+local TRANSITION_REVERT_POLLS = math.max(1, math.floor(TRANSITION_REVERT_MS / PASS_MS))
 -- Slice 6a: Gate Stability — checkpoints at 1s / 2s / 3s (poll counts derived from PASS_MS).
 local GATE_STABILITY_CHECKPOINT_SEC = { 1, 2, 3 }
 local GATE_STABILITY_CHECKPOINT_POLLS = {}
@@ -20,7 +23,7 @@ for i, sec in ipairs(GATE_STABILITY_CHECKPOINT_SEC) do
     GATE_STABILITY_CHECKPOINT_POLLS[i] = math.max(1, math.floor((sec * 1000) / PASS_MS))
 end
 local DEBUG             = false
-local MOD_BUILD         = "v3.5.0-s6b"  -- boot banner — confirm this string in UE4SS.log after reload
+local MOD_BUILD         = "v3.5.0-s6c"  -- boot banner — confirm this string in UE4SS.log after reload
 local INGAME_WARMUP_POLLS = 30      -- ~3s after ClientRestart before sky writes
 local INDOOR_NIGHT_REFRESH_POLLS = 20  -- re-apply game-night profile ~2s (frame-fight)
 local INDOOR_NIGHT_PROBE_POLLS = 5       -- passive readback ~500ms (detect G1R revert)
@@ -294,6 +297,8 @@ local playerControllerCache = nil
 local snapshotCount = 0
 local lastAppliedMode = nil   -- nil | "outdoor" | "indoor_day" | "indoor_night"
 local lastStableUnderRoof = nil -- confirmed IsUnderRoof after Gate Stability (or bootstrap)
+local lastStableMode = nil    -- Last Stable Profile mode for revert target
+local lastStableLeverSnapshot = nil
 local gateStabilityPhase = nil  -- nil | "pending" | "confirmed" | "armed"
 local gatePendingUnderRoof = nil
 local gatePendingPolls = 0
@@ -306,6 +311,7 @@ local udsNotReadyLogged = false
 local indoorNightRefreshPolls = 0
 local indoorNightProbePolls = 0
 local skyTransitionActive = false
+local skyTransitionPhase = nil    -- nil | "enter" | "revert"
 local skyTransitionPolls = 0
 local skyTransitionStartSnap = nil
 local skyTransitionEndSnap = nil
@@ -1364,6 +1370,7 @@ end
 
 local function resetSkyTransition()
     skyTransitionActive = false
+    skyTransitionPhase = nil
     skyTransitionPolls = 0
     skyTransitionStartSnap = nil
     skyTransitionEndSnap = nil
@@ -1371,6 +1378,12 @@ local function resetSkyTransition()
     skyTransitionTargetUnderRoof = nil
     skyTransitionGameNight = nil
     skyTransitionSkipExposure = false
+end
+
+local function commitLastStableProfile(mode, underRoof, gameNight)
+    lastStableMode = mode
+    lastStableUnderRoof = underRoof
+    lastStableLeverSnapshot = buildTargetLeverSnapshot(mode, gameNight)
 end
 
 local function finishSkyTransition(uds, tod)
@@ -1383,12 +1396,13 @@ local function finishSkyTransition(uds, tod)
     end
     announceApply(mode, tod, uds)
     lastAppliedMode = mode
-    lastStableUnderRoof = skyTransitionTargetUnderRoof
+    commitLastStableProfile(mode, skyTransitionTargetUnderRoof, gameNight)
     resetSkyTransition()
 end
 
 local function startSkyTransition(uds, underRoof, mode, gameNight)
     skyTransitionActive = true
+    skyTransitionPhase = "enter"
     skyTransitionPolls = 0
     skyTransitionTargetUnderRoof = underRoof
     skyTransitionTargetMode = mode
@@ -1408,6 +1422,33 @@ local function startSkyTransition(uds, underRoof, mode, gameNight)
         "sky transition enter -> %s (%.1fs linear)",
         mode,
         TRANSITION_ENTER_MS / 1000
+    ))
+end
+
+local function startSkyTransitionRevert(uds, underRoof)
+    local stableMode = lastStableMode or (lastStableUnderRoof and lastAppliedMode or "outdoor")
+    local stableGameNight = stableMode == "indoor_night"
+    skyTransitionActive = true
+    skyTransitionPhase = "revert"
+    skyTransitionPolls = 0
+    skyTransitionTargetMode = stableMode
+    skyTransitionGameNight = stableGameNight
+    skyTransitionSkipExposure = stableMode ~= "outdoor"
+    skyTransitionStartSnap = captureLeverSnapshot(uds)
+    skyTransitionEndSnap = lastStableLeverSnapshot
+        or buildTargetLeverSnapshot(stableMode, stableGameNight)
+    print(string.format(
+        "[G1R_IndoorNight] sky transition revert -> %s (%.1fs linear) build=%s",
+        stableMode,
+        TRANSITION_REVERT_MS / 1000,
+        MOD_BUILD
+    ))
+    log(string.format(
+        "sky transition revert -> %s (%.1fs linear) stable=%s actual=%s",
+        stableMode,
+        TRANSITION_REVERT_MS / 1000,
+        tostring(lastStableUnderRoof),
+        tostring(underRoof)
     ))
 end
 
@@ -1755,6 +1796,22 @@ local function startGatePending(underRoof)
     logGateStability("idle", "pending", underRoof and "target=inside" or "target=outside")
 end
 
+local function finishSkyTransitionRevert(uds, tod, underRoof)
+    local mode = lastStableMode or (lastStableUnderRoof and lastAppliedMode or "outdoor")
+    local gameNight = mode == "indoor_night"
+    if mode == "outdoor" then
+        applyDayRestore(uds)
+    else
+        applyIndoorProfile(uds, gameNight)
+    end
+    announceApply(mode, tod, uds)
+    lastAppliedMode = mode
+    resetSkyTransition()
+    if underRoof ~= lastStableUnderRoof then
+        startGatePending(underRoof)
+    end
+end
+
 local function restoreLastStableProfile(uds, gameNight)
     if lastStableUnderRoof then
         applyIndoorProfile(uds, gameNight)
@@ -1774,21 +1831,47 @@ local function abortSkyTransitionUnavailable(uds, tod, gameNight)
     restoreLastStableProfile(uds, gameNight)
 end
 
-local function cancelSkyTransition(underRoof)
+local function cancelSkyTransition(uds, underRoof)
     log(string.format(
         "sky transition cancelled (gate flip; stable=%s actual=%s)",
         tostring(lastStableUnderRoof),
         tostring(underRoof)
     ))
-    resetSkyTransition()
-    if underRoof ~= lastStableUnderRoof then
-        startGatePending(underRoof)
-    end
+    startSkyTransitionRevert(uds, underRoof)
 end
 
 local function tickSkyTransition(uds, underRoof, tod)
+    if skyTransitionPhase == "revert" then
+        if underRoof ~= lastStableUnderRoof then
+            log(string.format(
+                "sky transition revert interrupted (gate flip; stable=%s actual=%s)",
+                tostring(lastStableUnderRoof),
+                tostring(underRoof)
+            ))
+            resetSkyTransition()
+            startGatePending(underRoof)
+            return
+        end
+
+        skyTransitionPolls = skyTransitionPolls + 1
+        local t = math.min(1.0, skyTransitionPolls / TRANSITION_REVERT_POLLS)
+        applyBlendedLeverSnapshot(
+            uds,
+            skyTransitionStartSnap,
+            skyTransitionEndSnap,
+            t,
+            skyTransitionSkipExposure
+        )
+        log(string.format("sky transition revert t=%.2f mode=%s", t, skyTransitionTargetMode))
+
+        if t >= 1.0 then
+            finishSkyTransitionRevert(uds, tod, underRoof)
+        end
+        return
+    end
+
     if underRoof ~= skyTransitionTargetUnderRoof then
-        cancelSkyTransition(underRoof)
+        cancelSkyTransition(uds, underRoof)
         return
     end
 
@@ -1801,7 +1884,7 @@ local function tickSkyTransition(uds, underRoof, tod)
         t,
         skyTransitionSkipExposure
     )
-    log(string.format("sky transition t=%.2f mode=%s", t, skyTransitionTargetMode))
+    log(string.format("sky transition enter t=%.2f mode=%s", t, skyTransitionTargetMode))
 
     if t >= 1.0 then
         finishSkyTransition(uds, tod)
@@ -1874,6 +1957,8 @@ local function pass()
     local gateUnavailableResetAfter = GATE_STABILITY_CHECKPOINT_POLLS[#GATE_STABILITY_CHECKPOINT_POLLS]
 
     if skyTransitionActive then
+        local tickUnderRoof = skyTransitionPhase == "revert" and lastStableUnderRoof
+            or skyTransitionTargetUnderRoof
         if underRoof == nil then
             if not gateUnavailableLogged then
                 gateUnavailableLogged = true
@@ -1883,13 +1968,13 @@ local function pass()
             if gateUnavailablePolls >= gateUnavailableResetAfter then
                 abortSkyTransitionUnavailable(uds, tod, gameNight)
             else
-                tickSkyTransition(uds, skyTransitionTargetUnderRoof, tod)
+                tickSkyTransition(uds, tickUnderRoof, tod)
             end
         else
             gateUnavailableLogged = false
             gateUnavailablePolls = 0
             tickSkyTransition(uds, underRoof, tod)
-            if gateStabilityPhase == "pending" then
+            if gateStabilityPhase == "pending" and skyTransitionPhase == "enter" then
                 tickGateStability(uds, underRoof, tod, gameNight)
             end
         end
@@ -1915,6 +2000,8 @@ local function pass()
 
     if lastStableUnderRoof == nil then
         lastStableUnderRoof = false -- outdoor baseline until Gate Stability confirms inside
+        lastStableMode = "outdoor"
+        lastStableLeverSnapshot = buildTargetLeverSnapshot("outdoor", false)
         if underRoof then
             startGatePending(underRoof)
         else
@@ -1939,6 +2026,9 @@ local function pass()
 
     if not underRoof then
         lastAppliedMode = "outdoor"
+        if lastStableUnderRoof == false then
+            commitLastStableProfile("outdoor", false, gameNight)
+        end
         return
     end
 
@@ -1952,6 +2042,7 @@ local function pass()
         if modeChanged or indoorNightRefreshPolls >= INDOOR_NIGHT_REFRESH_POLLS then
             applyIndoorProfile(uds, true)
             announceApply(mode, tod, uds)
+            commitLastStableProfile("indoor_night", true, true)
             indoorNightRefreshPolls = 0
             indoorNightProbePolls = 0
         elseif indoorNightProbePolls >= INDOOR_NIGHT_PROBE_POLLS then
@@ -1970,6 +2061,7 @@ local function pass()
     if modeChanged then
         applyIndoorProfile(uds, false)
         announceApply(mode, tod, uds)
+        commitLastStableProfile("indoor_day", true, false)
     end
     lastAppliedMode = "indoor_day"
 end
@@ -1979,6 +2071,8 @@ local function setModEnabled(next)
     modEnabled = next
     lastAppliedMode = nil
     lastStableUnderRoof = nil
+    lastStableMode = nil
+    lastStableLeverSnapshot = nil
     resetGateStability()
     resetSkyTransition()
     if not modEnabled then
@@ -2006,9 +2100,10 @@ if DISCOVERY_MODE then
     print("[G1R_IndoorNight] loaded — DISCOVERY MODE (F8 = snapshot (Slice 2b inside detection)" .. spikeHint .. "; output -> snapshots.log + UE4SS.log)")
 else
     print(string.format(
-        "[G1R_IndoorNight] loaded — Slice 6b %s (F7 toggle; IsUnderRoof gate + 3s stability + %.1fs enter blend; poll %dms)",
+        "[G1R_IndoorNight] loaded — Slice 6c %s (F7 toggle; IsUnderRoof gate + 3s stability + %.1fs enter / %.1fs revert; poll %dms)",
         MOD_BUILD,
         TRANSITION_ENTER_MS / 1000,
+        TRANSITION_REVERT_MS / 1000,
         PASS_MS
     ))
 end
@@ -2055,6 +2150,8 @@ end)
 RegisterLoadMapPostHook(function(Engine, World)
     lastAppliedMode = nil
     lastStableUnderRoof = nil
+    lastStableMode = nil
+    lastStableLeverSnapshot = nil
     resetGateStability()
     resetSkyTransition()
     ingameWarmupPolls = 0
@@ -2067,6 +2164,8 @@ RegisterHook("/Script/Engine.PlayerController:ClientRestart", function(self, New
     ingameWarmupPolls = 0
     lastAppliedMode = nil
     lastStableUnderRoof = nil
+    lastStableMode = nil
+    lastStableLeverSnapshot = nil
     resetGateStability()
     resetSkyTransition()
     print("[G1R_IndoorNight] in-game (ClientRestart) — poll armed after warmup")
