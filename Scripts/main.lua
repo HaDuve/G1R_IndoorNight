@@ -13,7 +13,7 @@ local PASS_MS           = 100       -- poll interval (ms)
 local DEBUG             = false
 
 -- Discovery mode (Slice 1): read-only UDS instrumentation; no sky writes.
-local DISCOVERY_MODE    = true
+local DISCOVERY_MODE    = false
 local SNAPSHOT_KEY      = Key.F8
 -- Slice 2c: one-shot TOD write spike (F9 = G1R quickload; use F10).
 local TOD_SPIKE_ENABLED = true
@@ -246,6 +246,7 @@ local gothicControllerCache = nil
 local playerControllerCache = nil
 local trueTodCache = nil
 local snapshotCount = 0
+local lastAppliedIndoor = nil   -- nil | true (night) | false (day)
 
 -- ---- helpers ---------------------------------------------------------------
 local function log(msg)
@@ -1021,6 +1022,29 @@ local function spikeWriteLine(lines, label, before, target, after, writeOk)
     lines[#lines + 1] = string.format("      assessment = %s", assessReadback(before, target, after))
 end
 
+local function applyNightProfile(uds)
+    if not uds then return false end
+    for _, name in ipairs(G1R_SKY_MULTIPLIER_FIELDS) do
+        writeNumericField(uds, name, G1R_SKY_MULTIPLIER_TARGET)
+    end
+    pcall(function() uds["Apply Interior Adjustments"] = true end)
+    applySettingsProfile(uds, G1R_SETTINGS_NIGHT_PROFILE)
+    for _, entry in ipairs(G1R_DIRECT_NIGHT_WRITES) do
+        writeNumericField(uds, entry.name, entry.target)
+    end
+    return true
+end
+
+local function applyDayRestore(uds)
+    if not uds then return false end
+    pcall(function() uds["Apply Interior Adjustments"] = false end)
+    applySettingsProfile(uds, G1R_DAY_RESTORE_PROFILE)
+    for _, entry in ipairs(G1R_DAY_RESTORE_WRITES) do
+        writeNumericField(uds, entry.name, entry.target)
+    end
+    return true
+end
+
 local function runG1rLeverSpike()
     local lines = {}
     lines[#lines + 1] = ""
@@ -1061,50 +1085,21 @@ local function runG1rLeverSpike()
         lines[#lines + 1] = ""
     end
 
-    lines[#lines + 1] = "  [write attempts — multipliers + interior flag]"
+    applyNightProfile(uds)
+    lines[#lines + 1] = "  [write attempts — v3.1 night profile via applyNightProfile()]"
     for _, name in ipairs(G1R_SKY_MULTIPLIER_FIELDS) do
-        local before, t = readField(uds, name)
-        if t == "number" then
-            local target = G1R_SKY_MULTIPLIER_TARGET
-            local writeOk = writeNumericField(uds, name, target)
-            local after = select(1, readField(uds, name))
-            spikeWriteLine(lines, name, before, target, after, writeOk)
+        local after = select(1, readField(uds, name))
+        if after ~= nil then
+            lines[#lines + 1] = string.format("    %-40s = %.4f", name, after)
         end
     end
-
-    local applyBefore, applyType = readField(uds, "Apply Interior Adjustments")
-    if applyType == "boolean" then
-        local writeOk = pcall(function() uds["Apply Interior Adjustments"] = true end)
-        local after = select(1, readField(uds, "Apply Interior Adjustments"))
-        lines[#lines + 1] = "    [Apply Interior Adjustments]"
-        lines[#lines + 1] = string.format("      before     = %s", applyBefore and "true" or "false")
-        lines[#lines + 1] = "      write      = true"
-        lines[#lines + 1] = string.format("      write ok   = %s", writeOk and "true" or "false")
-        lines[#lines + 1] = string.format("      readback   = %s", after == nil and "UNREADABLE" or (after and "true" or "false"))
+    local applyAfter = select(1, readField(uds, "Apply Interior Adjustments"))
+    if applyAfter ~= nil then
+        lines[#lines + 1] = string.format("    %-40s = %s", "Apply Interior Adjustments", applyAfter and "true" or "false")
     end
-
-    lines[#lines + 1] = ""
-    lines[#lines + 1] = "  [SetSettings night profile]"
-    local setOk, setBefore, setAfter, setErr = applySettingsProfile(uds, G1R_SETTINGS_NIGHT_PROFILE)
-    if setErr then
-        lines[#lines + 1] = "    note       = " .. setErr
-    else
-        for key, target in pairs(G1R_SETTINGS_NIGHT_PROFILE) do
-            spikeWriteLine(lines, "SetSettings." .. key, setBefore[key], target, setAfter[key], setOk)
-        end
-    end
-
-    lines[#lines + 1] = ""
-    lines[#lines + 1] = "  [direct UDS night writes]"
-    for _, entry in ipairs(G1R_DIRECT_NIGHT_WRITES) do
-        local before, t = readField(uds, entry.name)
-        if t == "number" then
-            local writeOk = writeNumericField(uds, entry.name, entry.target)
-            local after = select(1, readField(uds, entry.name))
-            spikeWriteLine(lines, entry.name, before, entry.target, after, writeOk)
-        else
-            lines[#lines + 1] = string.format("    [%s] UNREADABLE (skipped)", entry.name)
-        end
+    local settingsAfter = readSettingsStruct(uds)
+    if settingsAfter then
+        appendSettingsFields(lines, "GetSettings after", settingsAfter)
     end
 
     lines[#lines + 1] = ""
@@ -1134,11 +1129,7 @@ local function runG1rLeverReset()
         print("[G1R_IndoorNight] F12 reset: UDS NOT FOUND")
         return
     end
-    pcall(function() uds["Apply Interior Adjustments"] = false end)
-    applySettingsProfile(uds, G1R_DAY_RESTORE_PROFILE)
-    for _, entry in ipairs(G1R_DAY_RESTORE_WRITES) do
-        writeNumericField(uds, entry.name, entry.target)
-    end
+    applyDayRestore(uds)
     print("[G1R_IndoorNight] F12 — day baseline restore applied (multipliers/sun/exposure/SetSettings)")
 end
 
@@ -1373,7 +1364,7 @@ local function discoverySnapshot()
     end
 end
 
--- ---- main pass (disabled for writes when DISCOVERY_MODE) -------------------
+-- ---- main pass (Slice 3: IsUnderRoof gate + v3.1 lever) --------------------
 local function pass()
     if DISCOVERY_MODE then return end
     if not modEnabled then return end
@@ -1381,32 +1372,37 @@ local function pass()
     local uds = findUds()
     if not uds then return end
 
-    local trueTod, _ = readTimeOfDay(uds)
-    if trueTod == nil then return end
+    local controller = findPlayerController()
+    if not controller then return end
 
-    local occlusion, _ = readOcclusion(uds)
-    if occlusion == nil then
-        return
+    local pawn = findPlayerPawn(controller)
+    if not pawn then return end
+
+    local underRoof = tryIsUnderRoof(pawn)
+    if underRoof == nil then return end
+
+    if underRoof then
+        if lastAppliedIndoor == true then return end
+        applyNightProfile(uds)
+        lastAppliedIndoor = true
+        log("indoor: v3.1 night profile applied (IsUnderRoof=true)")
+    else
+        if lastAppliedIndoor == false then return end
+        applyDayRestore(uds)
+        lastAppliedIndoor = false
+        log("outdoor: day baseline restored (IsUnderRoof=false)")
     end
-
-    local t = blendFactor(occlusion)
-    if t <= 0.0 then
-        trueTodCache = trueTod
-        return
-    end
-
-    trueTodCache = trueTod
-    local blended = lerp(trueTod, TARGET_TOD, t)
-    writeTimeOfDay(uds, blended)
-
-    log(string.format("occ=%.2f t=%.2f true=%.0f blend=%.0f", occlusion, t, trueTod, blended))
 end
 
 local function setModEnabled(next)
     if modEnabled == next then return end
     modEnabled = next
-    if not DISCOVERY_MODE and not modEnabled and safeObj(udsCache) and trueTodCache ~= nil then
-        writeTimeOfDay(udsCache, trueTodCache)
+    if not modEnabled then
+        lastAppliedIndoor = nil
+        local uds = findUds()
+        if uds then
+            applyDayRestore(uds)
+        end
     end
     print(string.format("[G1R_IndoorNight] %s", modEnabled and "ENABLED" or "DISABLED"))
 end
@@ -1426,7 +1422,10 @@ if DISCOVERY_MODE then
     local spikeHint = #spikeParts > 0 and ("; " .. table.concat(spikeParts, "; ")) or ""
     print("[G1R_IndoorNight] loaded — DISCOVERY MODE (F8 = snapshot (Slice 2b inside detection)" .. spikeHint .. "; output -> snapshots.log + UE4SS.log)")
 else
-    print("[G1R_IndoorNight] loaded")
+    print(string.format(
+        "[G1R_IndoorNight] loaded — Slice 3 (F7 toggle; IsUnderRoof gate; poll %dms)",
+        PASS_MS
+    ))
 end
 
 if DISCOVERY_MODE then
