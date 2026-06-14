@@ -26,6 +26,23 @@ fi
 ln -sfn "$SCRIPT_DIR" "$TARGET"
 echo "Linked:"
 echo "  $TARGET -> $SCRIPT_DIR"
-echo ""
-echo "Add to mods.txt if not already present:"
-echo "  $MOD_NAME : 1"
+
+MODS_TXT="$GAME_MODS/mods.txt"
+if [[ -f "$MODS_TXT" ]]; then
+  if grep -qE "^[[:space:]]*${MOD_NAME}[[:space:]]*:" "$MODS_TXT"; then
+    echo ""
+    echo "mods.txt already lists $MOD_NAME"
+  else
+    echo "" >> "$MODS_TXT"
+    echo "${MOD_NAME} : 1" >> "$MODS_TXT"
+    echo ""
+    echo "Added to mods.txt:"
+    echo "  ${MOD_NAME} : 1"
+  fi
+else
+  echo ""
+  echo "mods.txt not found at:"
+  echo "  $MODS_TXT"
+  echo "Add manually:"
+  echo "  $MOD_NAME : 1"
+fi

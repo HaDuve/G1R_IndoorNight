@@ -38,7 +38,12 @@ G1R_IndoorNight/Scripts/main.lua
 ## Usage
 
 - **F7** — toggle mod on/off mid-session (instant restore when off)
+- **F8** — discovery snapshot (when `DISCOVERY_MODE = true`; read-only UDS dump to console)
 - On by default at load
+
+### Discovery mode (Slice 1)
+
+With `DISCOVERY_MODE = true`, the mod performs **zero UDS writes**. Press **F8** at each pose in [docs/DISCOVERY.md](./docs/DISCOVERY.md) and paste console output into that doc for lever selection.
 
 ## Config
 
@@ -53,7 +58,9 @@ Edit `Scripts/main.lua` — CONFIG block at top. No rebuild; save and relaunch (
 | `OCCLUSION_FULL` | `1.0` | Full moonlit strength |
 | `PASS_MS` | `100` | Poll interval |
 | `DEBUG` | `false` | Log occlusion / TOD to UE4SS console |
+| `DISCOVERY_MODE` | `true` | Read-only instrumentation; disables sky writes |
+| `SNAPSHOT_KEY` | `Key.F8` | Print filtered UDS candidate snapshot |
 
 ## Status
 
-Implementation in progress — UDS actor discovery and occlusion read still TODO.
+Slice 1 (discovery mode) implemented — run [Discovery Protocol](./docs/DISCOVERY.md) in-game to identify UDS class and Implementation Lever.
