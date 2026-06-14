@@ -38,7 +38,7 @@ G1R_IndoorNight/Scripts/main.lua
 ## Usage
 
 - **F7** — toggle mod on/off mid-session (instant restore when off)
-- **F8** — discovery snapshot (when `DISCOVERY_MODE = true`; read-only UDS dump to console)
+- **F8** — discovery snapshot (when `DISCOVERY_MODE = true`; read-only UDS + **Inside Detection** dump to console)
 - **F10** — TOD write spike (Slice 2c; rejected). F9 = G1R quickload.
 - **F11** — G1R skylight lever spike (v3 moderate profile)
 - **F12** — restore day baseline after F11 spike
@@ -73,4 +73,4 @@ Edit `Scripts/main.lua` — CONFIG block at top. No rebuild; save and relaunch (
 
 ## Status
 
-Slice 2d complete — **G1R lever v3.1 accepted** (F11 spike). Next: Inside Detection (Slice 2b) then auto-apply (Slice 3). See [Discovery Protocol](./docs/DISCOVERY.md).
+Slice 2b complete — **`IsUnderRoof` accepted** as Inside gate (F8 HITL). Slice 2d v3.1 lever ready. Next: Slice 3 auto-apply. See [Discovery Protocol](./docs/DISCOVERY.md).

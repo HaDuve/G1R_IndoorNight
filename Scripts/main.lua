@@ -209,10 +209,41 @@ local UDS_SETTINGS_FIELDS = {
     "SkyLightTemperature",
 }
 
+-- G1R native Inside Detection (object dump Slice 2b).
+local PLAYER_CONTROLLER_CLASS_NAMES = {
+    "GothicPlayerControllerBaseBP_C",
+    "GothicPlayerControllerBase",
+}
+
+local PLAYER_PAWN_CLASS_NAMES = {
+    "GothicPlayerCharacter",
+}
+
+local INDOOR_DETECTION_COMPONENT_LINK_NAMES = {
+    "OcclusionDetectionComponent",
+    "m_IndoorDetectionComponent",
+}
+
+local INDOOR_DETECTION_BOOL_FIELDS = {
+    "bDetectedIsIndoor",
+    "bDetectedIsOutdoor",
+    "bUpdateOnMove",
+}
+
+local INDOOR_DETECTION_FLOAT_FIELDS = {
+    "DetectionConfidence",
+    "DetectionScore",
+    "DetectionUpdatedAtTime",
+    "DetectionAveragingWindowSizeSeconds",
+}
+
+local INDOOR_DETECTION_RECENT_MAX_AGE_SEC = 5.0
+
 -- ---- state -----------------------------------------------------------------
 local modEnabled = ENABLED
 local udsCache = nil
 local gothicControllerCache = nil
+local playerControllerCache = nil
 local trueTodCache = nil
 local snapshotCount = 0
 
@@ -287,6 +318,46 @@ local function actorClassName(obj)
     pcall(function() full = obj:GetFullName() end)
     pcall(function() short = obj:GetClass():GetFName():ToString() end)
     return short, full
+end
+
+local OCCLUSION_NESTED_CANDIDATES = {
+    "Total Occlusion",
+    "Inverted Global Occlusion",
+    "Full Occluded Percent",
+    "Not Occluded Percent",
+    "Occlusion",
+    "Player Occlusion",
+    "PlayerOcclusion",
+    "Value",
+    "Amount",
+    "Current Occlusion",
+    "Global Occlusion",
+    "Camera Occlusion",
+    "Occlusion Amount",
+}
+
+local function isObjectValue(v, t)
+    if t == "userdata" then return true end
+    if t == "table" and v.IsValid then return safeObj(v) end
+    return safeObj(v)
+end
+
+local function firstResolvedNumber(obj, names)
+    for _, name in ipairs(names) do
+        local v, t = readField(obj, name)
+        if t == "number" then
+            return name, v
+        end
+    end
+end
+
+local function followObjectLink(obj, names)
+    for _, name in ipairs(names) do
+        local v, t = readField(obj, name)
+        if isObjectValue(v, t) then
+            return v, name
+        end
+    end
 end
 
 -- ---- UDS discovery ---------------------------------------------------------
@@ -448,44 +519,246 @@ local function writeNumericField(obj, name, value)
     return ok
 end
 
-local OCCLUSION_NESTED_CANDIDATES = {
-    "Total Occlusion",
-    "Inverted Global Occlusion",
-    "Full Occluded Percent",
-    "Not Occluded Percent",
-    "Occlusion",
-    "Player Occlusion",
-    "PlayerOcclusion",
-    "Value",
-    "Amount",
-    "Current Occlusion",
-    "Global Occlusion",
-    "Camera Occlusion",
-    "Occlusion Amount",
-}
-
-local function isObjectValue(v, t)
-    if t == "userdata" then return true end
-    if t == "table" and v.IsValid then return safeObj(v) end
-    return safeObj(v)
-end
-
-local function firstResolvedNumber(obj, names)
-    for _, name in ipairs(names) do
-        local v, t = readField(obj, name)
-        if t == "number" then
-            return name, v
+-- Slice 2b helpers (after isObjectValue / followObjectLink above).
+local function findPlayerController()
+    if safeObj(playerControllerCache) then return playerControllerCache end
+    for _, className in ipairs(PLAYER_CONTROLLER_CLASS_NAMES) do
+        local ok, obj = pcall(FindFirstOf, className)
+        if ok and safeObj(obj) then
+            playerControllerCache = obj
+            log("found player controller: " .. className)
+            return obj
+        end
+    end
+    for _, className in ipairs(PLAYER_CONTROLLER_CLASS_NAMES) do
+        local list = FindAllOf(className)
+        if list then
+            for _, obj in pairs(list) do
+                if safeObj(obj) then
+                    playerControllerCache = obj
+                    log("found player controller via FindAllOf: " .. className)
+                    return obj
+                end
+            end
         end
     end
 end
 
-local function followObjectLink(obj, names)
-    for _, name in ipairs(names) do
-        local v, t = readField(obj, name)
-        if isObjectValue(v, t) then
-            return v, name
+local function findPlayerPawn(controller)
+    if safeObj(controller) then
+        local ok, pawn = pcall(function()
+            if controller.K2_GetPawn then
+                return controller:K2_GetPawn()
+            end
+        end)
+        if ok and safeObj(pawn) then return pawn, "K2_GetPawn()" end
+
+        for _, name in ipairs({ "Pawn", "Character", "AcknowledgedPawn" }) do
+            local v, t = readField(controller, name)
+            if isObjectValue(v, t) then
+                return v, name
+            end
         end
     end
+    for _, className in ipairs(PLAYER_PAWN_CLASS_NAMES) do
+        local ok, obj = pcall(FindFirstOf, className)
+        if ok and safeObj(obj) then
+            return obj, "FindFirstOf(" .. className .. ")"
+        end
+    end
+end
+
+local function findIndoorDetectionComponent(controller)
+    if not safeObj(controller) then return nil, nil end
+
+    local ok, comp = pcall(function()
+        if controller.GetIndoorDetectionComponent then
+            return controller:GetIndoorDetectionComponent()
+        end
+        if controller["GetIndoorDetectionComponent"] then
+            return controller["GetIndoorDetectionComponent"](controller)
+        end
+    end)
+    if ok and safeObj(comp) then
+        return comp, "GetIndoorDetectionComponent()"
+    end
+
+    local link, linkName = followObjectLink(controller, INDOOR_DETECTION_COMPONENT_LINK_NAMES)
+    if link then
+        return link, linkName
+    end
+end
+
+local function tryIsUnderRoof(pawn)
+    if not safeObj(pawn) then return nil, "no pawn" end
+
+    local attempts = {
+        function()
+            if EnvironmentManagerCharacterStatics and EnvironmentManagerCharacterStatics.IsUnderRoof then
+                return EnvironmentManagerCharacterStatics:IsUnderRoof(pawn)
+            end
+            if EnvironmentManagerCharacterStatics and EnvironmentManagerCharacterStatics["IsUnderRoof"] then
+                return EnvironmentManagerCharacterStatics["IsUnderRoof"](EnvironmentManagerCharacterStatics, pawn)
+            end
+        end,
+        function()
+            local statics = StaticFindObject("/Script/G1R.Default__EnvironmentManagerCharacterStatics")
+            if statics and statics.IsUnderRoof then
+                return statics:IsUnderRoof(pawn)
+            end
+        end,
+    }
+
+    for i, fn in ipairs(attempts) do
+        local ok, result = pcall(fn)
+        if ok and type(result) == "boolean" then
+            return result, "attempt " .. i
+        end
+    end
+    return nil, "IsUnderRoof call failed (see UE4SS.log)"
+end
+
+local function readIndoorDetectionSnapshot()
+    local out = {
+        componentVia = nil,
+        bDetectedIsIndoor = nil,
+        bDetectedIsOutdoor = nil,
+        detectionConfidence = nil,
+        detectionScore = nil,
+        hasRecentDetection = nil,
+        hasAnyValidDetection = nil,
+        isUnderRoof = nil,
+        isUnderRoofVia = nil,
+    }
+
+    local controller = findPlayerController()
+    if not controller then return out end
+
+    local comp, compVia = findIndoorDetectionComponent(controller)
+    out.componentVia = compVia
+    if comp then
+        local v, t = readField(comp, "bDetectedIsIndoor")
+        if t == "boolean" then out.bDetectedIsIndoor = v end
+        v, t = readField(comp, "bDetectedIsOutdoor")
+        if t == "boolean" then out.bDetectedIsOutdoor = v end
+        v, t = readField(comp, "DetectionConfidence")
+        if t == "number" then out.detectionConfidence = v end
+        v, t = readField(comp, "DetectionScore")
+        if t == "number" then out.detectionScore = v end
+
+        pcall(function()
+            if comp.HasRecentDetectionResult then
+                out.hasRecentDetection = comp:HasRecentDetectionResult(INDOOR_DETECTION_RECENT_MAX_AGE_SEC)
+            end
+        end)
+        pcall(function()
+            if comp.HasAnyValidDetectionResults then
+                out.hasAnyValidDetection = comp:HasAnyValidDetectionResults()
+            end
+        end)
+    end
+
+    local pawn = findPlayerPawn(controller)
+    if pawn then
+        out.isUnderRoof, out.isUnderRoofVia = tryIsUnderRoof(pawn)
+    end
+
+    return out
+end
+
+local function appendIndoorDetectionPath(lines)
+    lines[#lines + 1] = "  [inside detection path (Slice 2b — outdoor F8 then indoor F8, same session)]"
+
+    local controller = findPlayerController()
+    if not controller then
+        lines[#lines + 1] = "    player controller                      = NOT FOUND"
+        lines[#lines + 1] = "    tried                                  = "
+            .. table.concat(PLAYER_CONTROLLER_CLASS_NAMES, ", ")
+        return nil
+    end
+    local _, controllerFull = actorClassName(controller)
+    lines[#lines + 1] = string.format("    player controller                      = %s", controllerFull)
+
+    local pawn, pawnVia = findPlayerPawn(controller)
+    if pawn then
+        local _, pawnFull = actorClassName(pawn)
+        lines[#lines + 1] = string.format("    player pawn via                        = %s", pawnVia)
+        lines[#lines + 1] = string.format("    player pawn                            = %s", pawnFull)
+    else
+        lines[#lines + 1] = "    player pawn                            = NOT FOUND"
+    end
+
+    local comp, compVia = findIndoorDetectionComponent(controller)
+    if not comp then
+        lines[#lines + 1] = "    IndoorDetectionComponent               = NOT FOUND"
+        lines[#lines + 1] = "    tried                                  = GetIndoorDetectionComponent(), "
+            .. table.concat(INDOOR_DETECTION_COMPONENT_LINK_NAMES, ", ")
+    else
+        local _, compFull = actorClassName(comp)
+        lines[#lines + 1] = string.format("    component via                          = %s", compVia)
+        lines[#lines + 1] = string.format("    IndoorDetectionComponent               = %s", compFull)
+        lines[#lines + 1] = ""
+
+        for _, name in ipairs(INDOOR_DETECTION_BOOL_FIELDS) do
+            local v, t = readField(comp, name)
+            if t == "boolean" then
+                lines[#lines + 1] = string.format("    %-40s = %s", name, v and "true" or "false")
+            end
+        end
+
+        for _, name in ipairs(INDOOR_DETECTION_FLOAT_FIELDS) do
+            local v, t = readField(comp, name)
+            if t == "number" then
+                lines[#lines + 1] = string.format("    %-40s = %.4f", name, v)
+            end
+        end
+
+        lines[#lines + 1] = ""
+        pcall(function()
+            if comp.HasRecentDetectionResult then
+                local recent = comp:HasRecentDetectionResult(INDOOR_DETECTION_RECENT_MAX_AGE_SEC)
+                lines[#lines + 1] = string.format(
+                    "    HasRecentDetectionResult(%.1fs)          = %s",
+                    INDOOR_DETECTION_RECENT_MAX_AGE_SEC,
+                    recent and "true" or "false"
+                )
+            end
+        end)
+        pcall(function()
+            if comp.HasAnyValidDetectionResults then
+                local any = comp:HasAnyValidDetectionResults()
+                lines[#lines + 1] = string.format(
+                    "    HasAnyValidDetectionResults()            = %s",
+                    any and "true" or "false"
+                )
+            end
+        end)
+    end
+
+    lines[#lines + 1] = ""
+    lines[#lines + 1] = "  [secondary candidates]"
+    if pawn then
+        local underRoof, underVia = tryIsUnderRoof(pawn)
+        if underRoof ~= nil then
+            lines[#lines + 1] = string.format(
+                "    EnvironmentManagerCharacterStatics:IsUnderRoof = %s  (via %s)",
+                underRoof and "true" or "false",
+                underVia
+            )
+        else
+            lines[#lines + 1] = "    EnvironmentManagerCharacterStatics:IsUnderRoof = UNRESOLVED"
+        end
+    else
+        lines[#lines + 1] = "    EnvironmentManagerCharacterStatics:IsUnderRoof = SKIPPED (no pawn)"
+    end
+    lines[#lines + 1] = "    AreaContainerDetector:IsInside           = not probed (needs detector instance)"
+    lines[#lines + 1] = "    GothicTriggerVolume:m_IsInside           = not probed (volume-local; scan deferred)"
+
+    lines[#lines + 1] = ""
+    lines[#lines + 1] = "    compare protocol                       = note bDetectedIsIndoor + DetectionConfidence outdoor vs indoor"
+    lines[#lines + 1] = "    ship fallback if dead                  = F7 manual toggle (no auto gate)"
+
+    return comp
 end
 
 local function findWeatherActor(uds)
@@ -956,13 +1229,15 @@ local function buildDiscoverySnapshot()
     lines[#lines + 1] = ""
     lines[#lines + 1] = "========== G1R_IndoorNight DISCOVERY SNAPSHOT #" .. snapshotCount .. " =========="
     lines[#lines + 1] = "  mode       = read-only (DISCOVERY_MODE=true, zero UDS writes)"
-    lines[#lines + 1] = "  protocol   = Slice 2d: F8 baseline; F11 G1R lever spike; compare multipliers + GetSettings"
-    lines[#lines + 1] = "  paste output into docs/DISCOVERY.md for lever selection"
+    lines[#lines + 1] = "  protocol   = Slice 2b: outdoor F8 then indoor F8; compare Inside Detection fields"
+    lines[#lines + 1] = "  paste output into docs/DISCOVERY.md for gate selection (Slice 3)"
     lines[#lines + 1] = ""
 
     if not uds then
         lines[#lines + 1] = "  UDS actor  = NOT FOUND"
         lines[#lines + 1] = "  tried      = " .. table.concat(UDS_CLASS_NAMES, ", ")
+        lines[#lines + 1] = ""
+        appendIndoorDetectionPath(lines)
         lines[#lines + 1] = "================================================================"
         lines[#lines + 1] = ""
         return table.concat(lines, "\n"), nil, nil, nil, nil
@@ -986,9 +1261,36 @@ local function buildDiscoverySnapshot()
     else
         lines[#lines + 1] = "  Time of Day      = UNRESOLVED (see TOD candidates below)"
     end
+
+    local indoor = readIndoorDetectionSnapshot()
+    lines[#lines + 1] = ""
+    lines[#lines + 1] = "  --- inside detection primary (Slice 2b) ---"
+    if indoor.bDetectedIsIndoor ~= nil then
+        lines[#lines + 1] = string.format(
+            "  bDetectedIsIndoor    = %s",
+            indoor.bDetectedIsIndoor and "true" or "false"
+        )
+    else
+        lines[#lines + 1] = "  bDetectedIsIndoor    = UNRESOLVED"
+    end
+    if indoor.detectionConfidence ~= nil then
+        lines[#lines + 1] = string.format("  DetectionConfidence  = %.4f", indoor.detectionConfidence)
+    else
+        lines[#lines + 1] = "  DetectionConfidence  = UNRESOLVED"
+    end
+    if indoor.isUnderRoof ~= nil then
+        lines[#lines + 1] = string.format(
+            "  IsUnderRoof          = %s",
+            indoor.isUnderRoof and "true" or "false"
+        )
+    else
+        lines[#lines + 1] = "  IsUnderRoof          = UNRESOLVED"
+    end
     lines[#lines + 1] = ""
 
     appendOcclusionPath(lines, uds)
+    lines[#lines + 1] = ""
+    appendIndoorDetectionPath(lines)
     lines[#lines + 1] = ""
     appendGothicControllerPath(lines, uds)
     local settings = readSettingsStruct(uds)
@@ -1037,14 +1339,32 @@ local function discoverySnapshot()
     end
 
     if cls then
+        local indoor = readIndoorDetectionSnapshot()
+        local indoorPart = ""
+        if indoor.bDetectedIsIndoor ~= nil then
+            indoorPart = indoorPart .. string.format(
+                " indoor=%s",
+                indoor.bDetectedIsIndoor and "true" or "false"
+            )
+        end
+        if indoor.detectionConfidence ~= nil then
+            indoorPart = indoorPart .. string.format(" conf=%.4f", indoor.detectionConfidence)
+        end
+        if indoor.isUnderRoof ~= nil then
+            indoorPart = indoorPart .. string.format(
+                " underRoof=%s",
+                indoor.isUnderRoof and "true" or "false"
+            )
+        end
         local summary = string.format(
-            "snapshot #%d class=%s occlusion=%s (%.4f) tod=%s (%.1f)",
+            "snapshot #%d class=%s occlusion=%s (%.4f) tod=%s (%.1f)%s",
             snapshotCount,
             cls,
             occProp or "UNRESOLVED",
             occlusion or -1,
             todProp or "UNRESOLVED",
-            tod or -1
+            tod or -1,
+            indoorPart
         )
         pcall(function()
             local f = io.open(SNAPSHOT_SUMMARY, "a")
@@ -1091,6 +1411,12 @@ local function setModEnabled(next)
     print(string.format("[G1R_IndoorNight] %s", modEnabled and "ENABLED" or "DISABLED"))
 end
 
+local function reportPcallError(label, ok, err)
+    if not ok then
+        print(string.format("[G1R_IndoorNight] %s error: %s", label, tostring(err)))
+    end
+end
+
 -- ---- bootstrap -------------------------------------------------------------
 if DISCOVERY_MODE then
     local spikeParts = {}
@@ -1098,7 +1424,7 @@ if DISCOVERY_MODE then
     if G1R_LEVER_SPIKE_ENABLED then spikeParts[#spikeParts + 1] = "F11 = G1R lever spike (v3.1)" end
     if G1R_LEVER_RESET_ENABLED then spikeParts[#spikeParts + 1] = "F12 = restore day baseline" end
     local spikeHint = #spikeParts > 0 and ("; " .. table.concat(spikeParts, "; ")) or ""
-    print("[G1R_IndoorNight] loaded — DISCOVERY MODE (F8 = snapshot" .. spikeHint .. "; output -> snapshots.log + UE4SS.log)")
+    print("[G1R_IndoorNight] loaded — DISCOVERY MODE (F8 = snapshot (Slice 2b inside detection)" .. spikeHint .. "; output -> snapshots.log + UE4SS.log)")
 else
     print("[G1R_IndoorNight] loaded")
 end
@@ -1106,14 +1432,15 @@ end
 if DISCOVERY_MODE then
     RegisterKeyBind(SNAPSHOT_KEY, function()
         ExecuteInGameThread(function()
-            pcall(discoverySnapshot)
+            print("[G1R_IndoorNight] F8 snapshot requested...")
+            reportPcallError("F8 snapshot", pcall(discoverySnapshot))
         end)
     end)
 
     if TOD_SPIKE_ENABLED then
         RegisterKeyBind(TOD_SPIKE_KEY, function()
             ExecuteInGameThread(function()
-                pcall(runTodSpike)
+                reportPcallError("F10 TOD spike", pcall(runTodSpike))
             end)
         end)
     end
@@ -1121,7 +1448,7 @@ if DISCOVERY_MODE then
     if G1R_LEVER_SPIKE_ENABLED then
         RegisterKeyBind(G1R_LEVER_SPIKE_KEY, function()
             ExecuteInGameThread(function()
-                pcall(runG1rLeverSpike)
+                reportPcallError("F11 G1R lever spike", pcall(runG1rLeverSpike))
             end)
         end)
     end
@@ -1129,7 +1456,7 @@ if DISCOVERY_MODE then
     if G1R_LEVER_RESET_ENABLED then
         RegisterKeyBind(G1R_LEVER_RESET_KEY, function()
             ExecuteInGameThread(function()
-                pcall(runG1rLeverReset)
+                reportPcallError("F12 day restore", pcall(runG1rLeverReset))
             end)
         end)
     end

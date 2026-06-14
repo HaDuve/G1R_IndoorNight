@@ -1,6 +1,6 @@
 # Discovery Protocol — Slice 1
 
-**Status:** Slice 1 complete. **Slice 2a complete (UDS occlusion INACTIVE).** **Slice 2c complete (TOD REJECTED).** **Slice 2d complete (G1R lever ACCEPTED — v3.1).** Next: Slice 2b (Inside Detection) then Slice 3 (auto apply).
+**Status:** Slice 1 complete. **Slice 2a complete (UDS occlusion INACTIVE).** **Slice 2c complete (TOD REJECTED).** **Slice 2d complete (G1R lever ACCEPTED — v3.1).** **Slice 2b complete (Inside Detection — `IsUnderRoof` ACCEPTED).** Next: Slice 3 (auto apply v3.1 when `IsUnderRoof`).
 
 ## Slice 2d — G1R Skylight Lever Spike (**COMPLETE — ACCEPTED**)
 
@@ -30,7 +30,7 @@
 
 **Day restore:** F12 or relaunch (see `G1R_DAY_RESTORE_*` in CONFIG).
 
-**Slice 3:** Apply this bundle when Inside (gate TBD: Slice 2b or F7 manual); restore outdoor/`G1R_DAY_RESTORE_*` when not Inside.
+**Slice 3:** Apply v3.1 bundle when **`IsUnderRoof`** (Slice 2b gate); restore outdoor/`G1R_DAY_RESTORE_*` when not under roof. F7 manual override remains.
 
 ## Slice 2c — TOD Lever Write Spike (**COMPLETE — REJECTED**)
 
@@ -61,6 +61,47 @@ Daytime **Game Clock**. F8 → F10 → F8 per pose. F10 = one-shot write; F9 = G
 Outdoor vs New Camp house (same session): identical diagnostics — `Running=false`, `TotalHits=0`, `Max Interior Occlusion Distance=0`, `Total Occlusion=0`, `Apply Interior Adjustments=false`. Location was valid; component never started.
 
 **Pivot:** Inside Detection → G1R native signal (Slice 2b). Ship fallback → F7 manual toggle.
+
+## Slice 2b — G1R Inside Detection (**COMPLETE — ACCEPTED**)
+
+**Verdict (2026-06-14):** **`EnvironmentManagerCharacterStatics:IsUnderRoof`** is the Slice 3 gate. Outdoor vs New Camp house (same session, daytime Game Clock): `IsUnderRoof` false → true. **`bDetectedIsIndoor` rejected** (stuck false both poses). **`DetectionConfidence`** tracks inversely (1.0 outdoor → 0.0 indoor) — optional graded secondary; primary gate is bool `IsUnderRoof`.
+
+| Signal | Outdoor F8 #1 | Indoor F8 #2 | Gate? |
+|--------|---------------|--------------|-------|
+| **`IsUnderRoof`** | false | **true** | **Yes — primary** |
+| `DetectionConfidence` | 1.0000 | 0.0000 | Optional graded (`1 - confidence`) |
+| `DetectionScore` | -4.0579 | -0.0072 | Diagnostic only |
+| `bDetectedIsIndoor` | false | false | **No — stuck** |
+| `bDetectedIsOutdoor` | true | true | No delta |
+| UDS `Total Occlusion` | 0 | 0 | Dead (Slice 2a) |
+
+**Read path (Slice 3):** `GothicPlayerControllerBaseBP_C` → pawn (`Pawn` / `K2_GetPawn()`) → `EnvironmentManagerCharacterStatics:IsUnderRoof(pawn)`.
+
+**IndoorDetectionComponent path (F8 diagnostic):** `GetIndoorDetectionComponent()` → `OcclusionDetectionComponent` on player controller. Alive (`HasRecentDetectionResult=true`) but `bDetectedIsIndoor` unusable.
+
+**Ship fallback:** F7 manual toggle if `IsUnderRoof` false-positives appear in caves/mines (HITL pending there).
+
+**HITL sync:** `./tools/sync-from-ue4ss-log.sh` → `snapshots.log` (#1 outdoor, #2 indoor).
+
+<details>
+<summary>Outdoor snapshot #1 (primary lines)</summary>
+
+```
+bDetectedIsIndoor = false | DetectionConfidence = 1.0000 | IsUnderRoof = false
+bDetectedIsOutdoor = true | DetectionScore = -4.0579
+```
+
+</details>
+
+<details>
+<summary>Indoor snapshot #2 (primary lines)</summary>
+
+```
+bDetectedIsIndoor = false | DetectionConfidence = 0.0000 | IsUnderRoof = true
+bDetectedIsOutdoor = true | DetectionScore = -0.0072
+```
+
+</details>
 
 ## Slice 2a — Occlusion Diagnostic (reference protocol)
 
@@ -299,7 +340,7 @@ F8 struct/UObject hits on sky actor were **false positives** — wrong object, w
 ## After discovery
 
 1. ~~**Slice 2a:**~~ Occlusion Diagnostic — UDS dead
-2. **Slice 2b:** G1R native Inside Detection (or F7 manual gate for Slice 3)
+2. ~~**Slice 2b:**~~ G1R Inside Detection — **`IsUnderRoof` accepted** (F8 probe + HITL)
 3. ~~**Slice 2c:**~~ TOD rejected
 4. ~~**Slice 2d:**~~ G1R lever v3.1 accepted
 5. **Slice 3:** Auto apply accepted profile when Inside; `DISCOVERY_MODE = false`

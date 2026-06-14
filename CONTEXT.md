@@ -37,7 +37,7 @@ Any enclosed playable space where the player should receive Indoor Sky Dimming �
 _Avoid_: interior, enclosed area
 
 **Inside Detection**:
-How the mod decides the player is Inside before blending. Primary candidate: UDS Player Occlusion. If that signal is inactive in G1R, fall back to a G1R native interior signal (discovery pending). Ship fallback: player toggles F7 manually — no automatic gate.
+How the mod decides the player is Inside before blending. UDS Player Occlusion inactive in G1R (Slice 2a). **Accepted gate (Slice 2b):** `EnvironmentManagerCharacterStatics:IsUnderRoof(playerPawn)` — false outdoor, true in New Camp house HITL. F8 also probes `IndoorDetectionComponent` (`DetectionConfidence`; `bDetectedIsIndoor` stuck false). Ship fallback: F7 manual toggle.
 _Avoid_: occlusion check, indoor trigger
 
 **Implementation Lever**:
