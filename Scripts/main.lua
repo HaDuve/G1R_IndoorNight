@@ -11,7 +11,7 @@ local OCCLUSION_START   = 0.5       -- below: no blend
 local OCCLUSION_FULL    = 1.0       -- at/above: full TARGET_TOD blend
 local PASS_MS           = 100       -- poll interval (ms)
 local DEBUG             = false
-local MOD_BUILD         = "v3.2.4"  -- boot banner — confirm this string in UE4SS.log after reload
+local MOD_BUILD         = "v3.2.5"  -- boot banner — confirm this string in UE4SS.log after reload
 local INGAME_WARMUP_POLLS = 30      -- ~3s after ClientRestart before sky writes
 
 -- Discovery mode (Slice 1): read-only UDS instrumentation; no sky writes.
@@ -265,6 +265,7 @@ local lastAppliedMode = nil   -- nil | "outdoor" | "indoor_day" | "indoor_night"
 local gateUnavailableLogged = false
 local pollEnabled = false       -- true only after ClientRestart (in-game pawn)
 local ingameWarmupPolls = 0
+local udsNotReadyLogged = false
 
 -- ---- helpers ---------------------------------------------------------------
 local function log(msg)
@@ -1047,11 +1048,7 @@ end
 
 local function udsReadyForWrites(uds)
     if not safeObj(uds) then return false end
-    local settings = readSettingsStruct(uds)
-    if not settings then return false end
-    local tod = readTimeOfDay(uds)
-    if tod == nil or tod < 0 or tod > 2400 then return false end
-    return true
+    return readSettingsStruct(uds) ~= nil
 end
 
 local function announceApply(mode, tod, uds)
@@ -1443,7 +1440,14 @@ local function pass()
     if ingameWarmupPolls < INGAME_WARMUP_POLLS then return end
 
     local uds = findUds()
-    if not udsReadyForWrites(uds) then return end
+    if not udsReadyForWrites(uds) then
+        if not udsNotReadyLogged then
+            udsNotReadyLogged = true
+            print("[G1R_IndoorNight] UDS GetSettings not ready — waiting")
+        end
+        return
+    end
+    udsNotReadyLogged = false
 
     local controller = findPlayerController()
     if not controller then return end
@@ -1557,9 +1561,9 @@ RegisterKeyBind(TOGGLE_KEY, function()
 end)
 
 RegisterLoadMapPostHook(function(Engine, World)
-    pollEnabled = false
-    ingameWarmupPolls = 0
+    -- Sublevel streaming also fires LoadMap — do NOT clear pollEnabled (that killed the poll loop).
     lastAppliedMode = nil
+    ingameWarmupPolls = 0
 end)
 
 RegisterHook("/Script/Engine.PlayerController:ClientRestart", function(self, NewPawn)
