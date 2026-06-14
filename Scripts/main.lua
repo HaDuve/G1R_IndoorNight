@@ -1796,7 +1796,7 @@ local function startGatePending(underRoof)
     logGateStability("idle", "pending", underRoof and "target=inside" or "target=outside")
 end
 
-local function finishSkyTransitionRevert(uds, tod, underRoof)
+local function applyLastStableProfile(uds, tod)
     local mode = lastStableMode or (lastStableUnderRoof and lastAppliedMode or "outdoor")
     local gameNight = mode == "indoor_night"
     if mode == "outdoor" then
@@ -1806,6 +1806,11 @@ local function finishSkyTransitionRevert(uds, tod, underRoof)
     end
     announceApply(mode, tod, uds)
     lastAppliedMode = mode
+    return mode
+end
+
+local function finishSkyTransitionRevert(uds, tod, underRoof)
+    applyLastStableProfile(uds, tod)
     resetSkyTransition()
     if underRoof ~= lastStableUnderRoof then
         startGatePending(underRoof)
@@ -1843,6 +1848,13 @@ end
 local function tickSkyTransition(uds, underRoof, tod)
     if skyTransitionPhase == "revert" then
         if underRoof ~= lastStableUnderRoof then
+            local stableMode = applyLastStableProfile(uds, tod)
+            print(string.format(
+                "[G1R_IndoorNight] sky transition revert interrupted — snap to stable %s (gate=%s) build=%s",
+                stableMode,
+                underRoof and "inside" or "outside",
+                MOD_BUILD
+            ))
             log(string.format(
                 "sky transition revert interrupted (gate flip; stable=%s actual=%s)",
                 tostring(lastStableUnderRoof),
@@ -2026,9 +2038,6 @@ local function pass()
 
     if not underRoof then
         lastAppliedMode = "outdoor"
-        if lastStableUnderRoof == false then
-            commitLastStableProfile("outdoor", false, gameNight)
-        end
         return
     end
 
