@@ -1,6 +1,63 @@
 # Discovery Protocol — Slice 1
 
-**Status:** Slice 1 complete. **Slice 2a complete (UDS occlusion INACTIVE).** **Slice 2c complete (TOD REJECTED).** **Slice 2d complete (G1R lever ACCEPTED — v3.1).** **Slice 2b complete (Inside Detection — `IsUnderRoof` ACCEPTED).** Next: Slice 3 (auto apply v3.1 when `IsUnderRoof`).
+**Status:** **Slice 3 v3.3.12 (HITL accepted).** Tracker issues #1, #4, #5, #6 closed (2026-06-14).
+
+## Slice 3 — Auto Apply on `IsUnderRoof` (**v3.3.12 shipped — HITL accepted**)
+
+**Shipped:** `DISCOVERY_MODE = false`; poll `IsUnderRoof` every 100 ms; modes `indoor_day` / `indoor_night` / `outdoor`; F7 toggle + day restore.
+
+**Lever policy (HITL 2026-06-14):** See **`CONTEXT.md` → Lever Boundaries**. Summary: **never write `Exposure Bias in Interior` while indoors** (player **Extra Interior Exposure** owns it). Never write raw TOD or local lights. Night brightness via `NightBrightness`, skylight/moon multipliers, `OverallIntensity` — not exposure.
+
+**HITL (2026-06-14, v3.3.12 — accepted):**
+
+| Check | Result |
+|-------|--------|
+| Outdoor daytime / night baseline | **Pass** |
+| Indoor day (dim + cave feel) | **Pass** — v3.3.12 (crush 0.42, no hue) |
+| Indoor night (torches, readability) | **Pass** — v3.3.4+ (no exposure writes) |
+| Extra Interior Exposure respected indoors | **Pass** |
+| Game Clock unchanged | **Pass** |
+| F7 off / on toggle | **Pass** |
+
+**Accepted targets (v3.3.12)** — `Scripts/main.lua` CONFIG:
+
+| Lever | Indoor day | Indoor night |
+|-------|------------|--------------|
+| Skylight multipliers | **0.42** | **1.0** |
+| `Apply Interior Adjustments` | **true** | **false** |
+| `SetSettings.SkyLightIntensity` | **0.35** | restore **1.0** |
+| `SetSettings.OverallIntensity` | **0.86** | **1.08** |
+| `SetSettings.DirectionalBalance` | **0.08** | restore **1.0** |
+| `SetSettings.NightBrightness` | **0.38** | **0.40** |
+| `SetSettings.Contrast` | *(not written)* | *(not written)* |
+| `SetSettings.SkyLightTemperature` | *(not written)* | **-0.60** |
+| `SetSettings.Saturation` | *(not written)* | **0.92** |
+| `SetSettings.SunAngle` | **100** | — |
+| `Sun Light Intensity` | **0.14** | **0.90** |
+| `Sun Light Intensity Mult in Interiors` | **0.10** | **1.0** |
+| `Directional Lighting Intensity` | **0.90** | **3.0** |
+| `Sky Light Intensity Mult in Interiors` | **0.42** (via mult) | **1.20** |
+| `Moon Light Intensity Mult in Interiors` | — | **1.15** |
+| **`Exposure Bias in Interior`** | **do not write** | **do not write** |
+
+**Historical (v3.2):** Day-indoor crush experiment; game-night double-dim fixed in v3.2.6–v3.3.x. Exposure-based night tuning abandoned v3.3.4 (fought user slider).
+
+<details>
+<summary>v3.2 table (archive)</summary>
+
+| Lever (v3.2 day-indoor) | Target |
+|-------------------------|--------|
+| Skylight multipliers | **0.32** |
+| `SetSettings.SkyLightIntensity` | **0.30** |
+| `SetSettings.OverallIntensity` | **0.45** |
+| `SetSettings.DirectionalBalance` | **0.30** |
+| `SetSettings.NightBrightness` | **0.38** (day clock only) |
+| `Sun Light Intensity` | **0.22** |
+| `Sun Light Intensity Multiplier in Interiors` | **0.29** |
+| `Directional Lighting Intensity` | **1.92** |
+| `Exposure Bias in Interior` | ~~**-0.60**~~ → **not written (v3.3.6)** |
+
+</details>
 
 ## Slice 2d — G1R Skylight Lever Spike (**COMPLETE — ACCEPTED**)
 
@@ -30,7 +87,7 @@
 
 **Day restore:** F12 or relaunch (see `G1R_DAY_RESTORE_*` in CONFIG).
 
-**Slice 3:** Apply v3.1 bundle when **`IsUnderRoof`** (Slice 2b gate); restore outdoor/`G1R_DAY_RESTORE_*` when not under roof. F7 manual override remains.
+**Slice 3:** ~~Apply v3.1 bundle when **`IsUnderRoof`**~~ **shipped** — see Slice 3 section above. F7 manual override remains.
 
 ## Slice 2c — TOD Lever Write Spike (**COMPLETE — REJECTED**)
 
