@@ -1387,7 +1387,7 @@ local function finishSkyTransition(uds, tod)
     resetSkyTransition()
 end
 
-local function startSkyTransition(uds, underRoof, mode, gameNight, tod)
+local function startSkyTransition(uds, underRoof, mode, gameNight)
     skyTransitionActive = true
     skyTransitionPolls = 0
     skyTransitionTargetUnderRoof = underRoof
@@ -1755,6 +1755,25 @@ local function startGatePending(underRoof)
     logGateStability("idle", "pending", underRoof and "target=inside" or "target=outside")
 end
 
+local function restoreLastStableProfile(uds, gameNight)
+    if lastStableUnderRoof then
+        applyIndoorProfile(uds, gameNight)
+        lastAppliedMode = gameNight and "indoor_night" or "indoor_day"
+    else
+        applyDayRestore(uds)
+        lastAppliedMode = "outdoor"
+    end
+end
+
+local function abortSkyTransitionUnavailable(uds, tod, gameNight)
+    log(string.format(
+        "sky transition aborted — IsUnderRoof unavailable 3s (restore stable=%s)",
+        tostring(lastStableUnderRoof)
+    ))
+    resetSkyTransition()
+    restoreLastStableProfile(uds, gameNight)
+end
+
 local function cancelSkyTransition(underRoof)
     log(string.format(
         "sky transition cancelled (gate flip; stable=%s actual=%s)",
@@ -1793,7 +1812,7 @@ end
 local function onGateArmed(uds, underRoof, tod, gameNight)
     local mode = underRoof and (gameNight and "indoor_night" or "indoor_day") or "outdoor"
     resetGateStability()
-    startSkyTransition(uds, underRoof, mode, gameNight, tod)
+    startSkyTransition(uds, underRoof, mode, gameNight)
 end
 
 local function tickGateStability(uds, underRoof, tod, gameNight)
@@ -1850,6 +1869,33 @@ local function pass()
     if not pawn then return end
 
     local underRoof = tryIsUnderRoof(pawn)
+    local tod = readTimeOfDay(uds)
+    local gameNight = isGameNight(tod)
+    local gateUnavailableResetAfter = GATE_STABILITY_CHECKPOINT_POLLS[#GATE_STABILITY_CHECKPOINT_POLLS]
+
+    if skyTransitionActive then
+        if underRoof == nil then
+            if not gateUnavailableLogged then
+                gateUnavailableLogged = true
+                print("[G1R_IndoorNight] IsUnderRoof unavailable during sky transition — holding blend")
+            end
+            gateUnavailablePolls = gateUnavailablePolls + 1
+            if gateUnavailablePolls >= gateUnavailableResetAfter then
+                abortSkyTransitionUnavailable(uds, tod, gameNight)
+            else
+                tickSkyTransition(uds, skyTransitionTargetUnderRoof, tod)
+            end
+        else
+            gateUnavailableLogged = false
+            gateUnavailablePolls = 0
+            tickSkyTransition(uds, underRoof, tod)
+            if gateStabilityPhase == "pending" then
+                tickGateStability(uds, underRoof, tod, gameNight)
+            end
+        end
+        return
+    end
+
     if underRoof == nil then
         if not gateUnavailableLogged then
             gateUnavailableLogged = true
@@ -1857,8 +1903,7 @@ local function pass()
         end
         if gateStabilityPhase == "pending" then
             gateUnavailablePolls = gateUnavailablePolls + 1
-            local resetAfter = GATE_STABILITY_CHECKPOINT_POLLS[#GATE_STABILITY_CHECKPOINT_POLLS]
-            if gateUnavailablePolls >= resetAfter then
+            if gateUnavailablePolls >= gateUnavailableResetAfter then
                 logGateStability("pending", "idle", "IsUnderRoof unavailable — reset")
                 resetGateStability()
             end
@@ -1867,17 +1912,6 @@ local function pass()
     end
     gateUnavailableLogged = false
     gateUnavailablePolls = 0
-
-    local tod = readTimeOfDay(uds)
-    local gameNight = isGameNight(tod)
-
-    if skyTransitionActive then
-        tickSkyTransition(uds, underRoof, tod)
-        if gateStabilityPhase == "pending" then
-            tickGateStability(uds, underRoof, tod, gameNight)
-        end
-        return
-    end
 
     if lastStableUnderRoof == nil then
         lastStableUnderRoof = false -- outdoor baseline until Gate Stability confirms inside
