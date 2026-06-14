@@ -10,8 +10,14 @@ local TARGET_TOD        = 2300.0    -- UDS 0–2400; ~23:00 moonlit night
 local OCCLUSION_START   = 0.5       -- below: no blend
 local OCCLUSION_FULL    = 1.0       -- at/above: full TARGET_TOD blend
 local PASS_MS           = 100       -- poll interval (ms)
+-- Slice 6a: Gate Stability — checkpoints at 1s / 2s / 3s (poll counts derived from PASS_MS).
+local GATE_STABILITY_CHECKPOINT_SEC = { 1, 2, 3 }
+local GATE_STABILITY_CHECKPOINT_POLLS = {}
+for i, sec in ipairs(GATE_STABILITY_CHECKPOINT_SEC) do
+    GATE_STABILITY_CHECKPOINT_POLLS[i] = math.max(1, math.floor((sec * 1000) / PASS_MS))
+end
 local DEBUG             = false
-local MOD_BUILD         = "v3.3.12"  -- boot banner — confirm this string in UE4SS.log after reload
+local MOD_BUILD         = "v3.4.0-s6a"  -- boot banner — confirm this string in UE4SS.log after reload
 local INGAME_WARMUP_POLLS = 30      -- ~3s after ClientRestart before sky writes
 local INDOOR_NIGHT_REFRESH_POLLS = 20  -- re-apply game-night profile ~2s (frame-fight)
 local INDOOR_NIGHT_PROBE_POLLS = 5       -- passive readback ~500ms (detect G1R revert)
@@ -284,6 +290,12 @@ local gothicControllerCache = nil
 local playerControllerCache = nil
 local snapshotCount = 0
 local lastAppliedMode = nil   -- nil | "outdoor" | "indoor_day" | "indoor_night"
+local lastStableUnderRoof = nil -- confirmed IsUnderRoof after Gate Stability (or bootstrap)
+local gateStabilityPhase = nil  -- nil | "pending" | "confirmed" | "armed"
+local gatePendingUnderRoof = nil
+local gatePendingPolls = 0
+local gateCheckpointIndex = 0
+local gateUnavailablePolls = 0
 local gateUnavailableLogged = false
 local pollEnabled = false       -- true only after ClientRestart (in-game pawn)
 local ingameWarmupPolls = 0
@@ -1533,8 +1545,73 @@ local function discoverySnapshot()
     end
 end
 
-local function wasIndoorMode(mode)
-    return mode == "indoor_day" or mode == "indoor_night"
+local function resetGateStability()
+    gateStabilityPhase = nil
+    gatePendingUnderRoof = nil
+    gatePendingPolls = 0
+    gateCheckpointIndex = 0
+    gateUnavailablePolls = 0
+end
+
+local function logGateStability(fromPhase, toPhase, detail)
+    if not DEBUG then return end
+    local msg = string.format("gate stability: %s -> %s", fromPhase or "idle", toPhase)
+    if detail then
+        msg = msg .. " (" .. detail .. ")"
+    end
+    log(msg)
+end
+
+local function startGatePending(underRoof)
+    gateStabilityPhase = "pending"
+    gatePendingUnderRoof = underRoof
+    gatePendingPolls = 0
+    gateCheckpointIndex = 0
+    logGateStability("idle", "pending", underRoof and "target=inside" or "target=outside")
+end
+
+-- Slice 6b will replace instant apply here with enter Sky Transition blend.
+local function onGateArmed(uds, underRoof, tod, gameNight)
+    local mode = underRoof and (gameNight and "indoor_night" or "indoor_day") or "outdoor"
+    indoorNightRefreshPolls = 0
+    indoorNightProbePolls = 0
+    if mode == "outdoor" then
+        applyDayRestore(uds)
+    else
+        applyIndoorProfile(uds, gameNight)
+    end
+    announceApply(mode, tod, uds)
+    lastAppliedMode = mode
+    lastStableUnderRoof = underRoof
+    resetGateStability()
+end
+
+local function tickGateStability(uds, underRoof, tod, gameNight)
+    if gateStabilityPhase ~= "pending" then return end
+
+    if underRoof ~= gatePendingUnderRoof then
+        logGateStability("pending", "idle", "gate disagreement — reset")
+        resetGateStability()
+        return
+    end
+
+    gatePendingPolls = gatePendingPolls + 1
+
+    local nextIdx = gateCheckpointIndex + 1
+    local cpPoll = GATE_STABILITY_CHECKPOINT_POLLS[nextIdx]
+    if not cpPoll or gatePendingPolls < cpPoll then return end
+
+    gateCheckpointIndex = nextIdx
+    local cpSec = (cpPoll * PASS_MS) / 1000
+    logGateStability("pending", "pending", string.format("checkpoint %.0fs OK", cpSec))
+
+    if nextIdx < #GATE_STABILITY_CHECKPOINT_POLLS then return end
+
+    logGateStability("pending", "confirmed", "3s stable")
+    gateStabilityPhase = "confirmed"
+    logGateStability("confirmed", "armed", gatePendingUnderRoof and "enter inside" or "enter outside")
+    gateStabilityPhase = "armed"
+    onGateArmed(uds, gatePendingUnderRoof, tod, gameNight)
 end
 
 -- ---- main pass (Slice 3: IsUnderRoof gate + v3.2 lever) --------------------
@@ -1568,25 +1645,54 @@ local function pass()
             gateUnavailableLogged = true
             print("[G1R_IndoorNight] IsUnderRoof unavailable; holding current sky state")
         end
+        if gateStabilityPhase == "pending" then
+            gateUnavailablePolls = gateUnavailablePolls + 1
+            local resetAfter = GATE_STABILITY_CHECKPOINT_POLLS[#GATE_STABILITY_CHECKPOINT_POLLS]
+            if gateUnavailablePolls >= resetAfter then
+                logGateStability("pending", "idle", "IsUnderRoof unavailable — reset")
+                resetGateStability()
+            end
+        end
         return
     end
     gateUnavailableLogged = false
+    gateUnavailablePolls = 0
 
     local tod = readTimeOfDay(uds)
     local gameNight = isGameNight(tod)
-    local mode = underRoof and (gameNight and "indoor_night" or "indoor_day") or "outdoor"
-    local modeChanged = mode ~= lastAppliedMode
 
-    if mode == "outdoor" then
-        indoorNightRefreshPolls = 0
-        indoorNightProbePolls = 0
-        if wasIndoorMode(lastAppliedMode) then
-            applyDayRestore(uds)
-            announceApply(mode, tod, uds)
+    if lastStableUnderRoof == nil then
+        lastStableUnderRoof = false -- outdoor baseline until Gate Stability confirms inside
+        if underRoof then
+            startGatePending(underRoof)
+        else
+            lastAppliedMode = "outdoor"
         end
+        return
+    end
+
+    -- Inside/outside flips: Gate Stability (Slice 6a) — no instant apply on first flip.
+    if underRoof ~= lastStableUnderRoof then
+        if gateStabilityPhase == nil then
+            startGatePending(underRoof)
+        end
+        tickGateStability(uds, underRoof, tod, gameNight)
+        return
+    end
+
+    if gateStabilityPhase == "pending" then
+        logGateStability("pending", "idle", "returned to stable outdoor — reset")
+        resetGateStability()
+    end
+
+    if not underRoof then
         lastAppliedMode = "outdoor"
         return
     end
+
+    -- Stably inside: game-clock-only indoor_day ↔ indoor_night stays instant.
+    local mode = gameNight and "indoor_night" or "indoor_day"
+    local modeChanged = mode ~= lastAppliedMode
 
     if mode == "indoor_night" then
         indoorNightRefreshPolls = indoorNightRefreshPolls + 1
@@ -1609,18 +1715,20 @@ local function pass()
 
     indoorNightRefreshPolls = 0
     indoorNightProbePolls = 0
-    if not modeChanged then return end
-
-    applyIndoorProfile(uds, false)
-    announceApply(mode, tod, uds)
-    lastAppliedMode = mode
+    if modeChanged then
+        applyIndoorProfile(uds, false)
+        announceApply(mode, tod, uds)
+    end
+    lastAppliedMode = "indoor_day"
 end
 
 local function setModEnabled(next)
     if modEnabled == next then return end
     modEnabled = next
+    lastAppliedMode = nil
+    lastStableUnderRoof = nil
+    resetGateStability()
     if not modEnabled then
-        lastAppliedMode = nil
         local uds = findUds()
         if uds then
             applyDayRestore(uds)
@@ -1645,7 +1753,7 @@ if DISCOVERY_MODE then
     print("[G1R_IndoorNight] loaded — DISCOVERY MODE (F8 = snapshot (Slice 2b inside detection)" .. spikeHint .. "; output -> snapshots.log + UE4SS.log)")
 else
     print(string.format(
-        "[G1R_IndoorNight] loaded — Slice 3 %s (F7 toggle; IsUnderRoof gate; poll %dms)",
+        "[G1R_IndoorNight] loaded — Slice 6a %s (F7 toggle; IsUnderRoof gate + 3s stability; poll %dms)",
         MOD_BUILD,
         PASS_MS
     ))
@@ -1692,6 +1800,8 @@ end)
 
 RegisterLoadMapPostHook(function(Engine, World)
     lastAppliedMode = nil
+    lastStableUnderRoof = nil
+    resetGateStability()
     ingameWarmupPolls = 0
     indoorNightRefreshPolls = 0
     indoorNightProbePolls = 0
@@ -1701,6 +1811,8 @@ RegisterHook("/Script/Engine.PlayerController:ClientRestart", function(self, New
     pollEnabled = true
     ingameWarmupPolls = 0
     lastAppliedMode = nil
+    lastStableUnderRoof = nil
+    resetGateStability()
     print("[G1R_IndoorNight] in-game (ClientRestart) — poll armed after warmup")
 end)
 
