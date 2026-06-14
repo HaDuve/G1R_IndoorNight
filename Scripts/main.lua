@@ -1,6 +1,6 @@
 -- ============================================================================
 --  G1R_IndoorNight — UE4SS Lua mod for Gothic 1 Remake
---  IsUnderRoof-gated indoor sky dimming (UDS v3.1 lever). Game clock untouched.
+--  IsUnderRoof-gated indoor sky dimming (UDS v3.2 lever). Game clock untouched.
 -- ============================================================================
 
 -- ---- CONFIG ----------------------------------------------------------------
@@ -11,6 +11,7 @@ local OCCLUSION_START   = 0.5       -- below: no blend
 local OCCLUSION_FULL    = 1.0       -- at/above: full TARGET_TOD blend
 local PASS_MS           = 100       -- poll interval (ms)
 local DEBUG             = false
+local MOD_BUILD         = "v3.2.1"  -- boot banner — confirm this string in UE4SS.log after reload
 
 -- Discovery mode (Slice 1): read-only UDS instrumentation; no sky writes.
 local DISCOVERY_MODE    = false
@@ -26,7 +27,6 @@ local INDOOR_DARKEN_VS_V31      = 0.80
 local GAME_NIGHT_TOD_START      = 2000   -- UDS 0–2400 (~20:00)
 local GAME_NIGHT_TOD_END          = 600    -- ~06:00
 local G1R_SKY_MULTIPLIER_TARGET   = 0.32   -- v3.1 0.40 × 0.80
-local G1R_SKY_MULTIPLIER_NEUTRAL  = 1.00   -- game-night indoor: don't stack on native night
 local G1R_SETTINGS_INDOOR_DAY_PROFILE = {
     SkyLightIntensity = 0.30,
     OverallIntensity = 0.45,
@@ -39,17 +39,14 @@ local G1R_DIRECT_INDOOR_DAY_WRITES = {
     { name = "Directional Lighting Intensity", target = 1.92 },
     { name = "Exposure Bias in Interior", target = -0.60 },
 }
--- Same SetSettings brightness as day-indoor; omit NightBrightness; neutral skylight mults.
+-- Same perceptual target as day-indoor; boosted vs day profile to offset native night baseline.
 local G1R_SETTINGS_INDOOR_NIGHT_CLOCK_PROFILE = {
-    SkyLightIntensity = 0.30,
-    OverallIntensity = 0.45,
-    DirectionalBalance = 0.30,
+    SkyLightIntensity = 0.55,
+    OverallIntensity = 0.75,
+    DirectionalBalance = 0.50,
+    NightBrightness = 0.20,
 }
-local G1R_DIRECT_INDOOR_NIGHT_CLOCK_WRITES = {
-    { name = "Sun Light Intensity Multiplier in Interiors", target = 1.0 },
-    { name = "Moon Light Intensity Multiplier in Interiors", target = 1.0 },
-    { name = "Exposure Bias in Interior", target = 0.20 },
-}
+local G1R_DIRECT_INDOOR_NIGHT_CLOCK_WRITES = {}
 -- Legacy names (F11 spike / docs).
 local G1R_SETTINGS_NIGHT_PROFILE = G1R_SETTINGS_INDOOR_DAY_PROFILE
 local G1R_DIRECT_NIGHT_WRITES = G1R_DIRECT_INDOOR_DAY_WRITES
@@ -1045,18 +1042,37 @@ local function spikeWriteLine(lines, label, before, target, after, writeOk)
     lines[#lines + 1] = string.format("      assessment = %s", assessReadback(before, target, after))
 end
 
+local function announceApply(mode, tod, uds)
+    local mult, multType = readField(uds, "Dynamic Sky Light Multiplier")
+    local applyAdj = select(1, readField(uds, "Apply Interior Adjustments"))
+    print(string.format(
+        "[G1R_IndoorNight] apply mode=%s tod=%.0f mult=%s applyInterior=%s build=%s",
+        mode,
+        tod or -1,
+        multType == "number" and string.format("%.2f", mult) or "?",
+        applyAdj == nil and "?" or (applyAdj and "true" or "false"),
+        MOD_BUILD
+    ))
+end
+
+local function neutralizeIndoorStacking(uds)
+    pcall(function() uds["Apply Interior Adjustments"] = false end)
+    applySettingsProfile(uds, G1R_DAY_RESTORE_PROFILE)
+    for _, entry in ipairs(G1R_DAY_RESTORE_WRITES) do
+        writeNumericField(uds, entry.name, entry.target)
+    end
+end
+
 local function applyIndoorProfile(uds, gameNight)
     if not uds then return false end
-    pcall(function() uds["Apply Interior Adjustments"] = true end)
     if gameNight then
-        for _, name in ipairs(G1R_SKY_MULTIPLIER_FIELDS) do
-            writeNumericField(uds, name, G1R_SKY_MULTIPLIER_NEUTRAL)
-        end
+        neutralizeIndoorStacking(uds)
         applySettingsProfile(uds, G1R_SETTINGS_INDOOR_NIGHT_CLOCK_PROFILE)
         for _, entry in ipairs(G1R_DIRECT_INDOOR_NIGHT_CLOCK_WRITES) do
             writeNumericField(uds, entry.name, entry.target)
         end
     else
+        pcall(function() uds["Apply Interior Adjustments"] = true end)
         for _, name in ipairs(G1R_SKY_MULTIPLIER_FIELDS) do
             writeNumericField(uds, name, G1R_SKY_MULTIPLIER_TARGET)
         end
@@ -1428,26 +1444,21 @@ local function pass()
     local tod = readTimeOfDay(uds)
     local gameNight = isGameNight(tod)
     local mode = underRoof and (gameNight and "indoor_night" or "indoor_day") or "outdoor"
-
-    if mode == lastAppliedMode then return end
+    local modeChanged = mode ~= lastAppliedMode
 
     if mode == "outdoor" then
+        if not modeChanged then return end
         applyDayRestore(uds)
-        log("outdoor: day baseline restored (IsUnderRoof=false)")
     elseif mode == "indoor_night" then
         applyIndoorProfile(uds, true)
-        log(string.format(
-            "indoor: game-night parity profile (IsUnderRoof=true, tod=%.0f)",
-            tod or -1
-        ))
     else
         applyIndoorProfile(uds, false)
-        log(string.format(
-            "indoor: v3.2 day profile (IsUnderRoof=true, tod=%.0f)",
-            tod or -1
-        ))
     end
-    lastAppliedMode = mode
+
+    if modeChanged then
+        announceApply(mode, tod, uds)
+        lastAppliedMode = mode
+    end
 end
 
 local function setModEnabled(next)
@@ -1479,7 +1490,8 @@ if DISCOVERY_MODE then
     print("[G1R_IndoorNight] loaded — DISCOVERY MODE (F8 = snapshot (Slice 2b inside detection)" .. spikeHint .. "; output -> snapshots.log + UE4SS.log)")
 else
     print(string.format(
-        "[G1R_IndoorNight] loaded — Slice 3 v3.2 (F7 toggle; IsUnderRoof gate; poll %dms)",
+        "[G1R_IndoorNight] loaded — Slice 3 %s (F7 toggle; IsUnderRoof gate; poll %dms)",
+        MOD_BUILD,
         PASS_MS
     ))
 end
