@@ -11,8 +11,8 @@ local OCCLUSION_START   = 0.5       -- below: no blend
 local OCCLUSION_FULL    = 1.0       -- at/above: full TARGET_TOD blend
 local PASS_MS           = 100       -- poll interval (ms)
 local DEBUG             = false
-local MOD_BUILD         = "v3.2.3"  -- boot banner — confirm this string in UE4SS.log after reload
-local STARTUP_WARMUP_POLLS = 100    -- skip sky writes ~10s after load (UDS/world init)
+local MOD_BUILD         = "v3.2.4"  -- boot banner — confirm this string in UE4SS.log after reload
+local INGAME_WARMUP_POLLS = 30      -- ~3s after ClientRestart before sky writes
 
 -- Discovery mode (Slice 1): read-only UDS instrumentation; no sky writes.
 local DISCOVERY_MODE    = false
@@ -263,7 +263,8 @@ local playerControllerCache = nil
 local snapshotCount = 0
 local lastAppliedMode = nil   -- nil | "outdoor" | "indoor_day" | "indoor_night"
 local gateUnavailableLogged = false
-local startupPolls = 0
+local pollEnabled = false       -- true only after ClientRestart (in-game pawn)
+local ingameWarmupPolls = 0
 
 -- ---- helpers ---------------------------------------------------------------
 local function log(msg)
@@ -1436,9 +1437,10 @@ end
 local function pass()
     if DISCOVERY_MODE then return end
     if not modEnabled then return end
+    if not pollEnabled then return end
 
-    startupPolls = startupPolls + 1
-    if startupPolls < STARTUP_WARMUP_POLLS then return end
+    ingameWarmupPolls = ingameWarmupPolls + 1
+    if ingameWarmupPolls < INGAME_WARMUP_POLLS then return end
 
     local uds = findUds()
     if not udsReadyForWrites(uds) then return end
@@ -1552,6 +1554,19 @@ RegisterKeyBind(TOGGLE_KEY, function()
     ExecuteInGameThread(function()
         setModEnabled(not modEnabled)
     end)
+end)
+
+RegisterLoadMapPostHook(function(Engine, World)
+    pollEnabled = false
+    ingameWarmupPolls = 0
+    lastAppliedMode = nil
+end)
+
+RegisterHook("/Script/Engine.PlayerController:ClientRestart", function(self, NewPawn)
+    pollEnabled = true
+    ingameWarmupPolls = 0
+    lastAppliedMode = nil
+    print("[G1R_IndoorNight] in-game (ClientRestart) — poll armed after warmup")
 end)
 
 if not DISCOVERY_MODE then
