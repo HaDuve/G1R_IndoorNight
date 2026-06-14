@@ -1,128 +1,274 @@
 # Discovery Protocol — Slice 1
 
-Read-only UDS instrumentation for choosing the **Implementation Lever** (see [CONTEXT.md](../CONTEXT.md)).
+**Status:** Slice 1 complete. **Slice 2a complete (UDS occlusion INACTIVE).** **Slice 2c complete (TOD lever REJECTED).** Next: lever re-discovery via `GothicUltraDynamicSky` / `UltraDynamicSkySettings`; Slice 2b (G1R Inside Detection).
 
-## Setup
+## Slice 2c — TOD Lever Write Spike (**COMPLETE — REJECTED**)
 
-```bash
-./install.sh
-```
+**Verdict (2026-06-14):** Raw `Time of Day` on `Ultra_Dynamic_Sky_C` is **not a viable Implementation Lever**.
 
-Confirm `G1R_IndoorNight : 1` in `ue4ss/Mods/mods.txt`. Launch G1R; watch the UE4SS console for load banner.
+| Check | Result |
+|-------|--------|
+| Lua write + immediate readback | **Yes** — 991→2300, 1003→2300 (`write ok=true`, readback=2300) |
+| Persists to next F8 (~3s later) | **No** — post-F10 F8 shows 992.7 / 1003.8 (Game Clock drift only) |
+| Visual change toward night-indoor | **No** (HITL) |
+| Game Clock / HUD time unchanged | **Yes** (expected) |
+| Frame-fight verdict | **overwritten + no visual effect** |
 
-`Scripts/main.lua` defaults: `DISCOVERY_MODE = true`, `SNAPSHOT_KEY = Key.F8`.
+**Interpretation:** G1R's `GothicUltraDynamicSky` wrapper re-syncs sky from **Game Clock** every tick. The `Time of Day` float we read/write is a stale or non-authoritative mirror — writing it does not drive rendered lighting.
 
-## Three poses
+**Retrospective on Slice 1 lever pick:** Pose 2→3 TOD delta (676→2291) was **confounded** — pose 3 required advancing Game Clock to night via sleep/wait, not an independent sky control. Skylight/sun/moon top-level floats were identical across all poses.
 
-| Pose | Location | Game Clock | Expected occlusion |
-|------|----------|------------|--------------------|
-| **1** | Outdoor, open sky (e.g. near Old Camp gate) | Daytime (~10:00–14:00) | ~0 |
-| **2** | Deep indoor (e.g. Old Mine tunnel) | Same daytime | High (~0.7–1.0) |
-| **3** | Same spot as pose 2 | Night (~02:00 via sleep/wait) | Same as pose 2 |
+**Next lever candidates:** `GothicUltraDynamicSky` (`DayNightIntensity`, `SetSettings` + `UltraDynamicSkySettings.SkyLightIntensity` / `NightBrightness`); or post-tick re-apply after G1R sync (high frame-fight risk).
 
-**Pose 3 procedure:** Use in-game bed, fire, or wait — no console time cheat. Return to the pose-2 spot, then press **F8**.
+### Protocol (reference)
 
-## Capture
+Daytime **Game Clock**. F8 → F10 → F8 per pose. F10 = one-shot write; F9 = G1R quickload. Sync: `./tools/sync-from-ue4ss-log.sh` (snapshots) + grep `TOD SPIKE` in UE4SS.log.
 
-Press **F8** at each pose. Copy the full `DISCOVERY SNAPSHOT` block from the UE4SS console into the tables below.
+## Slice 2a — Occlusion Diagnostic (**COMPLETE**)
 
-## Pose 1 — outdoor daytime baseline
+**Verdict (2026-06-14):** UDS Player Occlusion **INACTIVE** in G1R.
 
-**Location notes:**
+Outdoor vs New Camp house (same session): identical diagnostics — `Running=false`, `TotalHits=0`, `Max Interior Occlusion Distance=0`, `Total Occlusion=0`, `Apply Interior Adjustments=false`. Location was valid; component never started.
 
-```
-(paste location)
-```
+**Pivot:** Inside Detection → G1R native signal (Slice 2b). Ship fallback → F7 manual toggle.
 
-**Console snapshot:**
+## Slice 2a — Occlusion Diagnostic (reference protocol)
 
-```
-(paste F8 output)
-```
+**Goal:** Determine whether UDS Player Occlusion is **alive** or **dead** in G1R.
 
-**Resolved identifiers:**
+**Protocol:** Same session — F8 **outdoor**, then F8 **indoor** (New Camp house or equivalent). Sync with `./tools/sync-from-ue4ss-log.sh`.
 
-| Field | Value | Property name |
-|-------|-------|---------------|
-| UDS class | | |
-| Player Occlusion | | |
-| Time of Day | | |
+**Verdict criteria:**
 
----
+| Observation | Verdict |
+|-------------|---------|
+| `Running = false` indoors | UDS occlusion **inactive** → pivot Inside Detection to G1R native signal |
+| `Running = true`, any float/array differs outdoor vs indoor | UDS occlusion **alive** → keep as gate candidate |
+| `Running = true`, all fields identical | UDS occlusion **non-functional** → pivot |
 
-## Pose 2 — deep indoor daytime (problem state)
+**Pivot plan:** G1R native interior signal (discovery); ship fallback = F7 manual toggle.
 
-**Location notes:**
-
-```
-(paste location — e.g. Old Mine depth)
-```
-
-**Console snapshot:**
-
-```
-(paste F8 output)
-```
-
-**Resolved identifiers:**
-
-| Field | Value | Property name |
-|-------|-------|---------------|
-| UDS class | | |
-| Player Occlusion | | |
-| Time of Day | | |
+**Lever:** ~~Time of Day provisional~~ → **REJECTED** (Slice 2c); re-discovery required.
 
 ---
 
-## Pose 3 — same indoor spot at ~02:00 (reference state)
+## Identified (Slice 1)
 
-**Location notes:**
+| Item | Result |
+|------|--------|
+| UDS class | `Ultra_Dynamic_Sky_C` |
+| UDS actor | `...MainMap:PersistentLevel.Ultra_Dynamic_Sky_C_UAID_18C04DDD879FCE6B01_2138010464` |
+| Time of Day property | `Time of Day` (float 0–2400) |
+| Player Occlusion | **`Total Occlusion`** via `Weather_BP` → `Player Occlusion` — path reads; **runtime flat (0) pending Slice 2a** |
+| Provisional lever | **`Time of Day`** (only top-level float with pose 2→3 delta) |
 
-```
-(same as pose 2; clock ~02:00)
-```
+## Readable float comparison
 
-**Console snapshot:**
+| Property | Pose 1 outdoor day | Pose 2 indoor day | Pose 3 indoor night |
+|----------|-------------------|-------------------|---------------------|
+| Time of Day | 660.7 (~11:00) | 676.1 (~11:16) | **2290.6 (~22:55)** |
+| Sky Light Intensity | 1.0 | 1.0 | 1.0 |
+| Sun Light Intensity | 0.9 | 0.9 | 0.9 |
+| Moon Light Intensity | 0.04 | 0.04 | 0.04 |
+| Overall Intensity | 1.0 | 1.0 | 1.0 |
+| Apply Interior Adjustments | false | false | false |
 
-```
-(paste F8 output)
-```
+**Pose 2 → 3 (lever selection pair):** only **Time of Day** changed (676 → 2291).
 
-**Resolved identifiers:**
-
-| Field | Value | Property name |
-|-------|-------|---------------|
-| UDS class | | |
-| Player Occlusion | | |
-| Time of Day | | |
-
----
+**Pose 1 → 2:** TOD drift from travel (~16 min game time); no skylight/sun/moon delta.
 
 ## Lever selection
 
-Compare pose 2 vs pose 3. Properties that change between day-indoors and night-indoors are lever candidates.
+**Chosen lever (provisional):** `Time of Day`
 
-Priority (from CONTEXT.md):
+| Property | Pose 2 | Pose 3 | Notes |
+|----------|--------|--------|-------|
+| Time of Day | 676.1 | 2290.6 | Only readable delta; night reference ~23:00 not ~02:00 but valid night look |
+| Sky Light Intensity | 1.0 | 1.0 | No top-level delta |
 
-1. Skylight / ambient intensity channel
-2. Occlusion-native Interior Adjustments field
-3. Night Time of Day as proxy
-4. Reject if read-only or fights per-frame game sync
+**Blend target at full occlusion:** ~2290 (pose 3) or config `TARGET_TOD` (2300).
 
-**Chosen lever:**
+**Risks for Slice 2:**
+- G1R may resync TOD from Game Clock every frame — needs in-game test
+- Without occlusion float, cannot gate blend by “how indoor” — **use Weather → Player Occlusion → Total Occlusion** (see object dump parse below)
 
-| Property | Pose 2 value | Pose 3 value | Notes |
-|----------|--------------|--------------|-------|
-| | | | |
+## Object dump parse (UE4SS_ObjectDump.txt)
 
-**Blend target at full occlusion:** pose-3 value for the chosen property.
+**Why F8 showed UObject for every occlusion name on sky:** those names are not float fields on `Ultra_Dynamic_Sky_C`. Live occlusion lives on a separate component owned by the weather actor.
 
-## Failure modes
+### Actor graph (MainMap)
 
-- **UDS actor NOT FOUND** — add class name from ActorDumperMod / Live Property Viewer to `UDS_CLASS_NAMES` in `main.lua`.
-- **Player Occlusion UNRESOLVED** — expand `OCCLUSION_CANDIDATES`; note exact name here:
-- **No skylight/interior candidates resolve** — enable `ActorDumperMod` temporarily and dump the UDS actor; add property names to candidate lists.
+```
+Ultra_Dynamic_Sky_C          (sky lighting, TOD)
+  └─ Weather_BP  ──────────► Ultra_Dynamic_Weather_C
+                                 └─ Player Occlusion  ──► UDS_PlayerOcclusion_C
+                                                              └─ Total Occlusion  (double, 0–1)
+```
+
+Level instances:
+
+| Actor | Path |
+|-------|------|
+| Sky | `...PersistentLevel.Ultra_Dynamic_Sky_C_UAID_18C04DDD879FCE6B01_2138010464` |
+| Weather | `...PersistentLevel.Ultra_Dynamic_Weather_C_UAID_18C04DDD879FD16B01_1709997616` |
+| Occlusion | `...Ultra_Dynamic_Weather_C_....Player Occlusion` → `UDS_PlayerOcclusion_C` |
+
+### Read path for Slice 2
+
+1. Find `Ultra_Dynamic_Sky_C` (existing mod logic).
+2. Read `Weather_BP` (`ObjectProperty`, offset `0xB80`) → `Ultra_Dynamic_Weather_C`.
+3. Read `Player Occlusion` (`ObjectProperty`, offset `0x3A0`) → `UDS_PlayerOcclusion_C`.
+4. Read **`Total Occlusion`** (`DoubleProperty`, offset `0x238`) — primary 0–1 indoor signal.
+
+Lua property names (exact spacing):
+
+- `"Weather_BP"` or find weather actor separately
+- `"Player Occlusion"` (space, on weather actor)
+- `"Total Occlusion"` (on occlusion component)
+
+### UDS_PlayerOcclusion_C — useful fields
+
+| Property | Type | Offset | Role |
+|----------|------|--------|------|
+| **Total Occlusion** | Double | 0x238 | **Primary lever** — blended 0–1 result |
+| Inverted Global Occlusion | Double | 0x120 | Alternate / inverted signal |
+| Full Occluded Percent | Double | 0x128 | Trace hit fraction (fully occluded) |
+| Not Occluded Percent | Double | 0x130 | Trace hit fraction (open sky) |
+| Current Occlusion Profile | Array[Double] | 0xF0 | Per-category profile (interp’d) |
+| Target Occlusion Profile | Array[Double] | 0xD8 | Target profile |
+| Occlusion Update Period | Double | 0xE8 | Poll rate (config) |
+| Running | Bool | 0x119 | Component active |
+
+### Ultra_Dynamic_Sky_C — occlusion-related (config only, not live value)
+
+| Property | Type | Notes |
+|----------|------|-------|
+| Apply Interior Adjustments | Bool | false in all 3 poses |
+| Occlusion Sampling Mode | Byte | Trace mode config |
+| Interior Occlusion Update Period | Double | Sky-side update rate |
+| Fraction of Trace Hits for No/Full Occlusion | Double | Thresholds |
+| Sky Light Intensity Multiplier in Interiors | Double | Applied when occluded |
+
+No `Player Occlusion` float or object on sky class itself.
+
+### Time of Day (confirmed)
+
+| Property | Type | Offset | F8 name |
+|----------|------|--------|---------|
+| Time Of Day | Double | 0x478 | `Time of Day` (works in F8) |
+| Internal Time of Day | Double | 0xB78 | |
+| Replicated Time of Day | Double | 0xF30 | |
+
+G1R wraps sky in `GothicUltraDynamicSky` (`/Script/G1R.GothicUltraDynamicSky`) with settings struct `UltraDynamicSkySettings` — separate from UDS occlusion.
+
+### Verification still needed
+
+F8 snapshots were taken **before** wiring the Weather → Occlusion path. Re-test:
+
+- **Pose 1 outdoor:** `Total Occlusion` ≈ 0
+- **Pose 2 indoor day:** `Total Occlusion` high (e.g. 0.7–1.0)
+- **Pose 3 indoor night:** same occlusion as pose 2; TOD differs
+
+Extract script: `./tools/extract-occlusion-from-dump.sh` → `occlusion-dump-extract.txt`
+
+---
+
+## Occlusion follow-up (superseded by dump parse above)
+
+F8 struct/UObject hits on sky actor were **false positives** — wrong object, wrong property names. Use weather component path instead.
+
+---
+
+## Pose 1 — outdoor daytime baseline
+
+**Resolved identifiers:**
+
+| Field | Value | Property name |
+|-------|-------|---------------|
+| UDS class | `Ultra_Dynamic_Sky_C` | actor class |
+| Player Occlusion | UNRESOLVED | struct refs |
+| Time of Day | 660.7 | `Time of Day` |
+
+<details>
+<summary>Full snapshot #1</summary>
+
+```
+========== G1R_IndoorNight DISCOVERY SNAPSHOT #1 ==========
+  UDS class  = Ultra_Dynamic_Sky_C
+  Player Occlusion = UNRESOLVED
+  Time of Day      = 660.7  (via 'Time of Day')
+  Sky Light Intensity = 1.0000
+  Sun Light Intensity = 0.9000
+  Moon Light Intensity = 0.0400
+  Apply Interior Adjustments = false
+================================================================
+```
+
+</details>
+
+---
+
+## Pose 2 — deep indoor daytime
+
+**Resolved identifiers:**
+
+| Field | Value | Property name |
+|-------|-------|---------------|
+| UDS class | `Ultra_Dynamic_Sky_C` | actor class |
+| Player Occlusion | UNRESOLVED | struct refs |
+| Time of Day | 676.1 | `Time of Day` |
+
+<details>
+<summary>Full snapshot #2</summary>
+
+```
+========== G1R_IndoorNight DISCOVERY SNAPSHOT #2 ==========
+  UDS class  = Ultra_Dynamic_Sky_C
+  Player Occlusion = UNRESOLVED
+  Time of Day      = 676.1  (via 'Time of Day')
+  Sky Light Intensity = 1.0000
+  Sun Light Intensity = 0.9000
+  Moon Light Intensity = 0.0400
+  Apply Interior Adjustments = false
+================================================================
+```
+
+</details>
+
+---
+
+## Pose 3 — same indoor spot at night
+
+**Resolved identifiers:**
+
+| Field | Value | Property name |
+|-------|-------|---------------|
+| UDS class | `Ultra_Dynamic_Sky_C` | actor class |
+| Player Occlusion | UNRESOLVED | struct refs |
+| Time of Day | 2290.6 | `Time of Day` |
+
+<details>
+<summary>Full snapshot #3</summary>
+
+```
+========== G1R_IndoorNight DISCOVERY SNAPSHOT #3 ==========
+  UDS class  = Ultra_Dynamic_Sky_C
+  Player Occlusion = UNRESOLVED
+  Time of Day      = 2290.6  (via 'Time of Day')
+  Sky Light Intensity = 1.0000
+  Sun Light Intensity = 0.9000
+  Moon Light Intensity = 0.0400
+  Apply Interior Adjustments = false
+================================================================
+```
+
+</details>
+
+---
 
 ## After discovery
 
-Set `DISCOVERY_MODE = false` in `main.lua` before implementing the write path (Slice 2+).
+1. **Slice 2a:** Occlusion Diagnostic — extended F8 (`Running`, profile arrays); outdoor vs indoor pair
+2. **Slice 2b:** (if UDS dead) G1R native interior signal hunt
+3. **Slice 2c:** Provisional TOD write test under working gate or F7 manual
+4. **Slice 3:** Auto blend (`DISCOVERY_MODE = false`); blocked until gate or manual fallback accepted

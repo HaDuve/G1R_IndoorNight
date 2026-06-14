@@ -29,9 +29,18 @@ echo "  $TARGET -> $SCRIPT_DIR"
 
 MODS_TXT="$GAME_MODS/mods.txt"
 if [[ -f "$MODS_TXT" ]]; then
-  if grep -qE "^[[:space:]]*${MOD_NAME}[[:space:]]*:" "$MODS_TXT"; then
+  if grep -qE "^[[:space:]]*${MOD_NAME}[[:space:]]*:[[:space:]]*1[[:space:]]*$" "$MODS_TXT"; then
     echo ""
-    echo "mods.txt already lists $MOD_NAME"
+    echo "mods.txt already enables $MOD_NAME"
+  elif grep -qE "^[[:space:]]*${MOD_NAME}[[:space:]]*:" "$MODS_TXT"; then
+    if [[ "$(uname)" == "Darwin" ]]; then
+      sed -i '' -E "s/^[[:space:]]*${MOD_NAME}[[:space:]]*:.*/${MOD_NAME} : 1/" "$MODS_TXT"
+    else
+      sed -i -E "s/^[[:space:]]*${MOD_NAME}[[:space:]]*:.*/${MOD_NAME} : 1/" "$MODS_TXT"
+    fi
+    echo ""
+    echo "Updated mods.txt entry to:"
+    echo "  ${MOD_NAME} : 1"
   else
     echo "" >> "$MODS_TXT"
     echo "${MOD_NAME} : 1" >> "$MODS_TXT"

@@ -21,7 +21,7 @@ Player `Engine.ini` tuning for max performance — Lumen off, shadows off, reduc
 _Avoid_: max perf mode, darkness tweaks
 
 **Indoor Sky Dimming**:
-While the player is **Inside**, the mod occlusion-blends Sun / Sky Lighting toward **night-level sky contribution** — lower skylight intensity, not a global sky flip. Goal is to match how interiors already look at night, not to display a moon or night sky aesthetic. Blend strength tracks UDS **Player Occlusion**; blending **starts at ~0.5**; below that, sky stays vanilla. Local light sources (torches, fires) stay at vanilla brightness. Toggle F7; off = instant restore. Default enabled. Config in `Scripts/main.lua`.
+While the player is **Inside**, the mod blends Sun / Sky Lighting toward **night-level sky contribution** — lower skylight intensity, not a global sky flip. Goal is to match how interiors already look at night, not to display a moon or night sky aesthetic. Blend strength tracks **Inside Detection** when available; blending **starts at ~0.5** on that signal; below that, sky stays vanilla. Local light sources (torches, fires) stay at vanilla brightness. Toggle F7; off = instant restore. Default enabled.
 _Avoid_: indoor night override, moonlit night mode
 
 **Night-Level Sky Contribution**:
@@ -29,19 +29,27 @@ The amount of skylight / ambient sky fill UDS applies at nighttime — the refer
 _Avoid_: moonlit night, night sky look
 
 **Player Occlusion**:
-UDS metric (0–1) for how enclosed the camera is: collision traces + optional occlusion volumes. Drives Interior Adjustments, sound muffling, and G1R's interior exposure boost.
+UDS metric (0–1) for how enclosed the camera is: collision traces + optional occlusion volumes. Intended to drive Interior Adjustments and sound muffling. **Inside Detection** candidate — property identified (`Total Occlusion` on the weather occlusion component), but runtime behaviour in G1R is unverified (reads flat at 0 in initial snapshots).
 _Avoid_: occlusion, inside detection
 
 **Inside**:
-Any enclosed playable space where Player Occlusion rises — buildings, caves, dungeons, mines. Detected via UDS occlusion, not custom mod volumes.
+Any enclosed playable space where the player should receive Indoor Sky Dimming — buildings, caves, dungeons, mines. A location can be Inside by geography while UDS Player Occlusion still reads zero; **Inside** is the player-facing concept, not a single float.
 _Avoid_: interior, enclosed area
+
+**Inside Detection**:
+How the mod decides the player is Inside before blending. Primary candidate: UDS Player Occlusion. If that signal is inactive in G1R, fall back to a G1R native interior signal (discovery pending). Ship fallback: player toggles F7 manually — no automatic gate.
+_Avoid_: occlusion check, indoor trigger
+
+**Provisional Implementation Lever**:
+**Time of Day** on the UDS sky actor — chosen because it was the only readable float that differed between day-indoor and night-indoor reference poses (later found **confounded** with Game Clock). Slice 2c **rejected** it: Lua write sticks momentarily but G1R `GothicUltraDynamicSky` re-syncs from Game Clock and **no visual change** occurs. Not the control surface for Indoor Sky Dimming.
+_Avoid_: temp lever, TOD hack
 
 **Extra Interior Exposure**:
 Player graphics setting (`ExtraInteriorExposure` in `GameUserSettings`) that brightens indoor scenes. Shares the occlusion signal family with Player Occlusion but stacks independently — mod does not override; player balances manually.
 _Avoid_: interior brightness, exposure slider
 
 **Implementation Lever**:
-The UDS property or function the mod writes to achieve Indoor Sky Dimming. **Undecided** — chosen after in-game discovery comparing day-indoors (too bright) vs night-indoors (reference). Candidates: skylight intensity, Interior Adjustments, night TOD as proxy.
+The UDS property or function the mod writes to achieve Indoor Sky Dimming. **Provisional: Time of Day** — see **Provisional Implementation Lever**. Other candidates (skylight intensity, Interior Adjustments) were not observable in discovery because the UDS interior pipeline may have been inactive.
 _Avoid_: override mechanism, sky hack
 
 **Discovery Protocol**:
@@ -60,8 +68,12 @@ _Avoid_: cheat time, console settime
 When discovery shows multiple properties differing between pose 2 (day-indoors) and pose 3 (night-indoors), pick the Implementation Lever in order: (1) skylight/ambient intensity channel; (2) occlusion-native Interior Adjustments field; (3) night Time of Day as proxy; (4) reject if read-only or fights per-frame game sync. Blend target at full occlusion = pose-3 value for the chosen property.
 _Avoid_: tie-break, winner rule
 
+**Occlusion Diagnostic**:
+Slice 2a pass: extended read-only snapshots (outdoor vs confirmed indoor, same session) to determine whether UDS Player Occlusion is **alive** (`Running` true and at least one field moves) or **dead** (pivot Inside Detection to G1R native signal; manual F7 as ship fallback).
+_Avoid_: occlusion debug, F8 dump
+
 **Apply Strategy**:
-After discovery, poll-and-write on a **1000 ms** interval (configurable `PASS_MS`). Cache outdoor true lever value when Player Occlusion is below `OCCLUSION_START`; blend toward pose-3 target by occlusion. Escalate to post-tick hook only if in-game test proves G1R overwrites every frame.
+After Inside Detection and Implementation Lever are confirmed, poll-and-write on a configurable interval. Cache outdoor true lever value when below blend threshold; blend toward night-level target by inside strength. Escalate to post-tick hook only if in-game test proves G1R overwrites every frame.
 _Avoid_: frame hook, tick hook
 
 ## Flagged ambiguities

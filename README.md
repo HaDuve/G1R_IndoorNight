@@ -39,6 +39,7 @@ G1R_IndoorNight/Scripts/main.lua
 
 - **F7** — toggle mod on/off mid-session (instant restore when off)
 - **F8** — discovery snapshot (when `DISCOVERY_MODE = true`; read-only UDS dump to console)
+- **F10** — TOD write spike (when `DISCOVERY_MODE = true` and `TOD_SPIKE_ENABLED = true`; one-shot write to ~2300 + readback log). F9 is G1R quickload — not used by this mod.
 - On by default at load
 
 ### Discovery mode (Slice 1)
@@ -55,12 +56,14 @@ Edit `Scripts/main.lua` — CONFIG block at top. No rebuild; save and relaunch (
 | `TOGGLE_KEY` | `Key.F7` | In-game toggle |
 | `TARGET_TOD` | `2300` | UDS time-of-day at full occlusion (0–2400) |
 | `OCCLUSION_START` | `0.5` | Below this, no blend |
-| `OCCLUSION_FULL` | `1.0` | Full moonlit strength |
+| `OCCLUSION_FULL` | `1.0` | Full night-level sky contribution at max occlusion |
 | `PASS_MS` | `100` | Poll interval |
 | `DEBUG` | `false` | Log occlusion / TOD to UE4SS console |
 | `DISCOVERY_MODE` | `true` | Read-only instrumentation; disables sky writes |
 | `SNAPSHOT_KEY` | `Key.F8` | Print filtered UDS candidate snapshot |
+| `TOD_SPIKE_ENABLED` | `true` | F10 one-shot TOD write test (Slice 2c; discovery mode only) |
+| `TOD_SPIKE_KEY` | `Key.F10` | Key for TOD spike (avoid F9 = G1R quickload) |
 
 ## Status
 
-Slice 1 (discovery mode) implemented — run [Discovery Protocol](./docs/DISCOVERY.md) in-game to identify UDS class and Implementation Lever.
+Slice 1 (discovery mode) implemented — run [Discovery Protocol](./docs/DISCOVERY.md) in-game, then `./tools/verify-install.sh` to confirm load and snapshot capture.

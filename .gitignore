@@ -1,3 +1,5 @@
 .DS_Store
 *.log
+snapshots.log
+snapshots.summary.log
 Thumbs.db
