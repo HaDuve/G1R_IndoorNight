@@ -10,6 +10,9 @@ local TARGET_TOD        = 2300.0    -- UDS 0–2400; ~23:00 moonlit night
 local OCCLUSION_START   = 0.5       -- below: no blend
 local OCCLUSION_FULL    = 1.0       -- at/above: full TARGET_TOD blend
 local PASS_MS           = 100       -- poll interval (ms)
+-- Slice 6b: Sky Transition enter — linear lerp of allowed levers after Gate Stability arms.
+local TRANSITION_ENTER_MS = 4000
+local TRANSITION_ENTER_POLLS = math.max(1, math.floor(TRANSITION_ENTER_MS / PASS_MS))
 -- Slice 6a: Gate Stability — checkpoints at 1s / 2s / 3s (poll counts derived from PASS_MS).
 local GATE_STABILITY_CHECKPOINT_SEC = { 1, 2, 3 }
 local GATE_STABILITY_CHECKPOINT_POLLS = {}
@@ -17,7 +20,7 @@ for i, sec in ipairs(GATE_STABILITY_CHECKPOINT_SEC) do
     GATE_STABILITY_CHECKPOINT_POLLS[i] = math.max(1, math.floor((sec * 1000) / PASS_MS))
 end
 local DEBUG             = false
-local MOD_BUILD         = "v3.4.0-s6a"  -- boot banner — confirm this string in UE4SS.log after reload
+local MOD_BUILD         = "v3.5.0-s6b"  -- boot banner — confirm this string in UE4SS.log after reload
 local INGAME_WARMUP_POLLS = 30      -- ~3s after ClientRestart before sky writes
 local INDOOR_NIGHT_REFRESH_POLLS = 20  -- re-apply game-night profile ~2s (frame-fight)
 local INDOOR_NIGHT_PROBE_POLLS = 5       -- passive readback ~500ms (detect G1R revert)
@@ -302,6 +305,14 @@ local ingameWarmupPolls = 0
 local udsNotReadyLogged = false
 local indoorNightRefreshPolls = 0
 local indoorNightProbePolls = 0
+local skyTransitionActive = false
+local skyTransitionPolls = 0
+local skyTransitionStartSnap = nil
+local skyTransitionEndSnap = nil
+local skyTransitionTargetMode = nil
+local skyTransitionTargetUnderRoof = nil
+local skyTransitionGameNight = nil
+local skyTransitionSkipExposure = false
 
 -- ---- helpers ---------------------------------------------------------------
 local function log(msg)
@@ -1226,6 +1237,180 @@ local function announceApply(mode, tod, uds)
     end
 end
 
+-- ---- Slice 6b: Sky Transition enter blend -----------------------------------
+local leverDirectFieldNames = nil
+
+local function getLeverDirectFieldNames()
+    if leverDirectFieldNames then return leverDirectFieldNames end
+    local seen = {}
+    local names = {}
+    local function add(entries)
+        for _, entry in ipairs(entries) do
+            if not seen[entry.name] then
+                seen[entry.name] = true
+                names[#names + 1] = entry.name
+            end
+        end
+    end
+    add(G1R_DAY_RESTORE_WRITES)
+    add(G1R_DIRECT_INDOOR_DAY_WRITES)
+    add(G1R_NIGHT_INDOOR_BRIGHTNESS_WRITES)
+    leverDirectFieldNames = names
+    return names
+end
+
+local function settingsSnapKey(name)
+    return "SetSettings:" .. name
+end
+
+local function captureLeverSnapshot(uds)
+    local snap = {}
+    local applyAdj, applyType = readField(uds, "Apply Interior Adjustments")
+    if applyType == "boolean" then
+        snap["Apply Interior Adjustments"] = applyAdj and 1 or 0
+    end
+    for _, name in ipairs(G1R_SKY_MULTIPLIER_FIELDS) do
+        local v, t = readField(uds, name)
+        if t == "number" then snap[name] = v end
+    end
+    local settings = readSettingsStruct(uds)
+    if settings then
+        for _, name in ipairs(UDS_SETTINGS_FIELDS) do
+            local v, t = readField(settings, name)
+            if t == "number" then snap[settingsSnapKey(name)] = v end
+        end
+    end
+    for _, name in ipairs(getLeverDirectFieldNames()) do
+        local v, t = readField(uds, name)
+        if t == "number" then snap[name] = v end
+    end
+    return snap
+end
+
+local function addSettingsTargets(snap, profile)
+    for key, value in pairs(profile) do
+        snap[settingsSnapKey(key)] = value
+    end
+end
+
+local function addDirectTargets(snap, entries, skipExposure)
+    for _, entry in ipairs(entries) do
+        if not (skipExposure and entry.name == "Exposure Bias in Interior") then
+            snap[entry.name] = entry.target
+        end
+    end
+end
+
+local function buildTargetLeverSnapshot(mode, gameNight)
+    local snap = {}
+    local skipExposure = mode ~= "outdoor"
+    if mode == "outdoor" then
+        snap["Apply Interior Adjustments"] = 0
+        addSettingsTargets(snap, G1R_DAY_RESTORE_PROFILE)
+        addDirectTargets(snap, G1R_DAY_RESTORE_WRITES, false)
+        for _, name in ipairs(G1R_SKY_MULTIPLIER_FIELDS) do
+            snap[name] = 1.0
+        end
+    elseif gameNight then
+        snap["Apply Interior Adjustments"] = 0
+        addSettingsTargets(snap, G1R_DAY_RESTORE_PROFILE)
+        addDirectTargets(snap, G1R_DAY_RESTORE_WRITES, true)
+        for _, name in ipairs(G1R_SKY_MULTIPLIER_FIELDS) do
+            snap[name] = 1.0
+        end
+        addDirectTargets(snap, G1R_NIGHT_INDOOR_BRIGHTNESS_WRITES, false)
+        addSettingsTargets(snap, G1R_SETTINGS_INDOOR_NIGHT_SKYLIGHT_HUE)
+    else
+        snap["Apply Interior Adjustments"] = 1
+        for _, name in ipairs(G1R_SKY_MULTIPLIER_FIELDS) do
+            snap[name] = G1R_SKY_MULTIPLIER_TARGET
+        end
+        addSettingsTargets(snap, G1R_SETTINGS_INDOOR_DAY_PROFILE)
+        addDirectTargets(snap, G1R_DIRECT_INDOOR_DAY_WRITES, false)
+    end
+    return snap
+end
+
+local function applyBlendedLeverSnapshot(uds, startSnap, endSnap, t, skipExposure)
+    local settingsProfile = {}
+    local seen = {}
+    for key in pairs(endSnap) do seen[key] = true end
+    for key in pairs(startSnap) do seen[key] = true end
+
+    for key in pairs(seen) do
+        if key == "Exposure Bias in Interior" and skipExposure then
+            -- Indoor poll path: never write or lerp exposure.
+        else
+            local endVal = endSnap[key]
+            if endVal ~= nil then
+                local startVal = startSnap[key]
+                if startVal == nil then startVal = endVal end
+                local blended = lerp(startVal, endVal, t)
+                if key == "Apply Interior Adjustments" then
+                    pcall(function() uds["Apply Interior Adjustments"] = blended >= 0.5 end)
+                elseif key:sub(1, 12) == "SetSettings:" then
+                    settingsProfile[key:sub(13)] = blended
+                else
+                    writeNumericField(uds, key, blended)
+                end
+            end
+        end
+    end
+
+    if next(settingsProfile) then
+        applySettingsProfile(uds, settingsProfile)
+    end
+end
+
+local function resetSkyTransition()
+    skyTransitionActive = false
+    skyTransitionPolls = 0
+    skyTransitionStartSnap = nil
+    skyTransitionEndSnap = nil
+    skyTransitionTargetMode = nil
+    skyTransitionTargetUnderRoof = nil
+    skyTransitionGameNight = nil
+    skyTransitionSkipExposure = false
+end
+
+local function finishSkyTransition(uds, tod)
+    local mode = skyTransitionTargetMode
+    local gameNight = skyTransitionGameNight
+    if mode == "outdoor" then
+        applyDayRestore(uds)
+    else
+        applyIndoorProfile(uds, gameNight)
+    end
+    announceApply(mode, tod, uds)
+    lastAppliedMode = mode
+    lastStableUnderRoof = skyTransitionTargetUnderRoof
+    resetSkyTransition()
+end
+
+local function startSkyTransition(uds, underRoof, mode, gameNight, tod)
+    skyTransitionActive = true
+    skyTransitionPolls = 0
+    skyTransitionTargetUnderRoof = underRoof
+    skyTransitionTargetMode = mode
+    skyTransitionGameNight = gameNight
+    skyTransitionSkipExposure = mode ~= "outdoor"
+    skyTransitionStartSnap = captureLeverSnapshot(uds)
+    skyTransitionEndSnap = buildTargetLeverSnapshot(mode, gameNight)
+    indoorNightRefreshPolls = 0
+    indoorNightProbePolls = 0
+    print(string.format(
+        "[G1R_IndoorNight] sky transition enter -> %s (%.1fs linear) build=%s",
+        mode,
+        TRANSITION_ENTER_MS / 1000,
+        MOD_BUILD
+    ))
+    log(string.format(
+        "sky transition enter -> %s (%.1fs linear)",
+        mode,
+        TRANSITION_ENTER_MS / 1000
+    ))
+end
+
 local function runG1rLeverSpike()
     local lines = {}
     lines[#lines + 1] = ""
@@ -1570,20 +1755,45 @@ local function startGatePending(underRoof)
     logGateStability("idle", "pending", underRoof and "target=inside" or "target=outside")
 end
 
--- Slice 6b will replace instant apply here with enter Sky Transition blend.
+local function cancelSkyTransition(underRoof)
+    log(string.format(
+        "sky transition cancelled (gate flip; stable=%s actual=%s)",
+        tostring(lastStableUnderRoof),
+        tostring(underRoof)
+    ))
+    resetSkyTransition()
+    if underRoof ~= lastStableUnderRoof then
+        startGatePending(underRoof)
+    end
+end
+
+local function tickSkyTransition(uds, underRoof, tod)
+    if underRoof ~= skyTransitionTargetUnderRoof then
+        cancelSkyTransition(underRoof)
+        return
+    end
+
+    skyTransitionPolls = skyTransitionPolls + 1
+    local t = math.min(1.0, skyTransitionPolls / TRANSITION_ENTER_POLLS)
+    applyBlendedLeverSnapshot(
+        uds,
+        skyTransitionStartSnap,
+        skyTransitionEndSnap,
+        t,
+        skyTransitionSkipExposure
+    )
+    log(string.format("sky transition t=%.2f mode=%s", t, skyTransitionTargetMode))
+
+    if t >= 1.0 then
+        finishSkyTransition(uds, tod)
+    end
+end
+
+-- Slice 6b: start enter Sky Transition blend instead of instant apply.
 local function onGateArmed(uds, underRoof, tod, gameNight)
     local mode = underRoof and (gameNight and "indoor_night" or "indoor_day") or "outdoor"
-    indoorNightRefreshPolls = 0
-    indoorNightProbePolls = 0
-    if mode == "outdoor" then
-        applyDayRestore(uds)
-    else
-        applyIndoorProfile(uds, gameNight)
-    end
-    announceApply(mode, tod, uds)
-    lastAppliedMode = mode
-    lastStableUnderRoof = underRoof
     resetGateStability()
+    startSkyTransition(uds, underRoof, mode, gameNight, tod)
 end
 
 local function tickGateStability(uds, underRoof, tod, gameNight)
@@ -1661,6 +1871,14 @@ local function pass()
     local tod = readTimeOfDay(uds)
     local gameNight = isGameNight(tod)
 
+    if skyTransitionActive then
+        tickSkyTransition(uds, underRoof, tod)
+        if gateStabilityPhase == "pending" then
+            tickGateStability(uds, underRoof, tod, gameNight)
+        end
+        return
+    end
+
     if lastStableUnderRoof == nil then
         lastStableUnderRoof = false -- outdoor baseline until Gate Stability confirms inside
         if underRoof then
@@ -1728,6 +1946,7 @@ local function setModEnabled(next)
     lastAppliedMode = nil
     lastStableUnderRoof = nil
     resetGateStability()
+    resetSkyTransition()
     if not modEnabled then
         local uds = findUds()
         if uds then
@@ -1753,8 +1972,9 @@ if DISCOVERY_MODE then
     print("[G1R_IndoorNight] loaded — DISCOVERY MODE (F8 = snapshot (Slice 2b inside detection)" .. spikeHint .. "; output -> snapshots.log + UE4SS.log)")
 else
     print(string.format(
-        "[G1R_IndoorNight] loaded — Slice 6a %s (F7 toggle; IsUnderRoof gate + 3s stability; poll %dms)",
+        "[G1R_IndoorNight] loaded — Slice 6b %s (F7 toggle; IsUnderRoof gate + 3s stability + %.1fs enter blend; poll %dms)",
         MOD_BUILD,
+        TRANSITION_ENTER_MS / 1000,
         PASS_MS
     ))
 end
@@ -1802,6 +2022,7 @@ RegisterLoadMapPostHook(function(Engine, World)
     lastAppliedMode = nil
     lastStableUnderRoof = nil
     resetGateStability()
+    resetSkyTransition()
     ingameWarmupPolls = 0
     indoorNightRefreshPolls = 0
     indoorNightProbePolls = 0
@@ -1813,6 +2034,7 @@ RegisterHook("/Script/Engine.PlayerController:ClientRestart", function(self, New
     lastAppliedMode = nil
     lastStableUnderRoof = nil
     resetGateStability()
+    resetSkyTransition()
     print("[G1R_IndoorNight] in-game (ClientRestart) — poll armed after warmup")
 end)
 
