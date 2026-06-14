@@ -38,7 +38,15 @@ G1R_IndoorNight/Scripts/main.lua
 ## Usage
 
 - **F7** — toggle mod on/off mid-session (instant restore when off)
+- **F8** — discovery snapshot (when `DISCOVERY_MODE = true`; read-only UDS + **Inside Detection** dump to console)
+- **F10** — TOD write spike (Slice 2c; rejected). F9 = G1R quickload.
+- **F11** — G1R skylight lever spike (v3 moderate profile)
+- **F12** — restore day baseline after F11 spike
 - On by default at load
+
+### Discovery mode (Slice 1)
+
+With `DISCOVERY_MODE = true`, the mod performs **zero UDS writes**. Press **F8** at each pose in [docs/DISCOVERY.md](./docs/DISCOVERY.md) and paste console output into that doc for lever selection.
 
 ## Config
 
@@ -50,10 +58,19 @@ Edit `Scripts/main.lua` — CONFIG block at top. No rebuild; save and relaunch (
 | `TOGGLE_KEY` | `Key.F7` | In-game toggle |
 | `TARGET_TOD` | `2300` | UDS time-of-day at full occlusion (0–2400) |
 | `OCCLUSION_START` | `0.5` | Below this, no blend |
-| `OCCLUSION_FULL` | `1.0` | Full moonlit strength |
+| `OCCLUSION_FULL` | `1.0` | Full night-level sky contribution at max occlusion |
 | `PASS_MS` | `100` | Poll interval |
 | `DEBUG` | `false` | Log occlusion / TOD to UE4SS console |
+| `DISCOVERY_MODE` | `true` | Read-only instrumentation; disables sky writes |
+| `SNAPSHOT_KEY` | `Key.F8` | Print filtered UDS candidate snapshot |
+| `TOD_SPIKE_ENABLED` | `true` | F10 one-shot TOD write test (Slice 2c; discovery mode only) |
+| `TOD_SPIKE_KEY` | `Key.F10` | Key for TOD spike (avoid F9 = G1R quickload) |
+| `G1R_LEVER_SPIKE_ENABLED` | `true` | F11 G1R skylight / SetSettings spike (Slice 2d) |
+| `G1R_LEVER_SPIKE_KEY` | `Key.F11` | Key for G1R lever spike |
+| `G1R_SKY_MULTIPLIER_TARGET` | `0.0` | F11 Dynamic/Target Sky Light Multiplier |
+| `G1R_SETTINGS_NIGHT_PROFILE` | see `main.lua` | F11 `SetSettings` bundle (SkyLightIntensity, OverallIntensity, …) |
+| `G1R_DIRECT_NIGHT_WRITES` | see `main.lua` | F11 direct UDS fields (sun, exposure, interior multipliers) |
 
 ## Status
 
-Implementation in progress — UDS actor discovery and occlusion read still TODO.
+Slice 2b complete — **`IsUnderRoof` accepted** as Inside gate (F8 HITL). Slice 2d v3.1 lever ready. Next: Slice 3 auto-apply. See [Discovery Protocol](./docs/DISCOVERY.md).
