@@ -1,6 +1,6 @@
 -- ============================================================================
 --  G1R_IndoorNight — UE4SS Lua mod for Gothic 1 Remake
---  Occlusion-blended indoor sky dimming (UDS). Game clock untouched.
+--  IsUnderRoof-gated indoor sky dimming (UDS v3.1 lever). Game clock untouched.
 -- ============================================================================
 
 -- ---- CONFIG ----------------------------------------------------------------
@@ -244,9 +244,9 @@ local modEnabled = ENABLED
 local udsCache = nil
 local gothicControllerCache = nil
 local playerControllerCache = nil
-local trueTodCache = nil
 local snapshotCount = 0
 local lastAppliedIndoor = nil   -- nil | true (night) | false (day)
+local gateUnavailableLogged = false
 
 -- ---- helpers ---------------------------------------------------------------
 local function log(msg)
@@ -1379,7 +1379,14 @@ local function pass()
     if not pawn then return end
 
     local underRoof = tryIsUnderRoof(pawn)
-    if underRoof == nil then return end
+    if underRoof == nil then
+        if not gateUnavailableLogged then
+            gateUnavailableLogged = true
+            print("[G1R_IndoorNight] IsUnderRoof unavailable; holding current sky state")
+        end
+        return
+    end
+    gateUnavailableLogged = false
 
     if underRoof then
         if lastAppliedIndoor == true then return end
@@ -1470,7 +1477,7 @@ end)
 if not DISCOVERY_MODE then
     LoopAsync(PASS_MS, function()
         ExecuteInGameThread(function()
-            pcall(pass)
+            reportPcallError("poll pass", pcall(pass))
         end)
         return false
     end)

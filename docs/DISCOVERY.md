@@ -1,6 +1,21 @@
 # Discovery Protocol — Slice 1
 
-**Status:** Slice 1 complete. **Slice 2a complete (UDS occlusion INACTIVE).** **Slice 2c complete (TOD REJECTED).** **Slice 2d complete (G1R lever ACCEPTED — v3.1).** **Slice 2b complete (Inside Detection — `IsUnderRoof` ACCEPTED).** Next: Slice 3 (auto apply v3.1 when `IsUnderRoof`).
+**Status:** Slice 1 complete. **Slice 2a complete (UDS occlusion INACTIVE).** **Slice 2c complete (TOD REJECTED).** **Slice 2d complete (G1R lever ACCEPTED — v3.1).** **Slice 2b complete (Inside Detection — `IsUnderRoof` ACCEPTED).** **Slice 3 implemented (PR #11 — pending HITL).** Next: HITL verify #4 ACs, then #5 gate tuning.
+
+## Slice 3 — Auto Apply v3.1 on `IsUnderRoof` (**IMPLEMENTED — pending HITL**)
+
+**Shipped (2026-06-14, PR #11):** `DISCOVERY_MODE = false`; poll `IsUnderRoof` every 100 ms; apply v3.1 when under roof; `G1R_DAY_RESTORE_*` when not; F7 off = instant day restore.
+
+| Check | Result |
+|-------|--------|
+| Outdoor daytime baseline | _pending HITL_ |
+| Indoor dimming (New Camp house) | _pending HITL_ |
+| Indoor dimming (Old Mine) | _pending HITL_ |
+| F7 off / on toggle | _pending HITL_ |
+| Game Clock unchanged | _pending HITL_ |
+| Frame-fight / snap-back | _pending HITL_ |
+
+**HITL protocol:** Run PR #11 test plan; record results here and check off issue #4 ACs.
 
 ## Slice 2d — G1R Skylight Lever Spike (**COMPLETE — ACCEPTED**)
 
@@ -30,7 +45,7 @@
 
 **Day restore:** F12 or relaunch (see `G1R_DAY_RESTORE_*` in CONFIG).
 
-**Slice 3:** Apply v3.1 bundle when **`IsUnderRoof`** (Slice 2b gate); restore outdoor/`G1R_DAY_RESTORE_*` when not under roof. F7 manual override remains.
+**Slice 3:** ~~Apply v3.1 bundle when **`IsUnderRoof`**~~ **shipped** — see Slice 3 section above. F7 manual override remains.
 
 ## Slice 2c — TOD Lever Write Spike (**COMPLETE — REJECTED**)
 

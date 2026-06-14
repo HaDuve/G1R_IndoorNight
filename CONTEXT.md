@@ -21,7 +21,7 @@ Player `Engine.ini` tuning for max performance — Lumen off, shadows off, reduc
 _Avoid_: max perf mode, darkness tweaks
 
 **Indoor Sky Dimming**:
-While the player is **Inside**, the mod blends Sun / Sky Lighting toward **night-level sky contribution** — lower skylight intensity, not a global sky flip. Goal is to match how interiors already look at night, not to display a moon or night sky aesthetic. Blend strength tracks **Inside Detection** when available; blending **starts at ~0.5** on that signal; below that, sky stays vanilla. Local light sources (torches, fires) stay at vanilla brightness. Toggle F7; off = instant restore. Default enabled.
+While the player is **Inside** (`IsUnderRoof=true`), the mod applies the accepted v3.1 **Implementation Lever** — lower skylight intensity toward **night-level sky contribution**, not a global sky flip. Goal is to match how interiors already look at night, not to display a moon or night sky aesthetic. When **Outside** (`IsUnderRoof=false`), day baseline is restored. Local light sources (torches, fires) stay at vanilla brightness. Toggle F7; off = instant day restore. Default enabled. Optional future: graded blend on `DetectionConfidence` (#5).
 _Avoid_: indoor night override, moonlit night mode
 
 **Night-Level Sky Contribution**:
@@ -68,7 +68,7 @@ Slice 2a pass: extended read-only snapshots (outdoor vs confirmed indoor, same s
 _Avoid_: occlusion debug, F8 dump
 
 **Apply Strategy**:
-After Inside Detection and Implementation Lever are confirmed, poll-and-write on a configurable interval. Cache outdoor true lever value when below blend threshold; blend toward night-level target by inside strength. Escalate to post-tick hook only if in-game test proves G1R overwrites every frame.
+Poll `IsUnderRoof` on a configurable interval (`PASS_MS`, default 100 ms). Apply v3.1 night profile when under roof; restore day baseline when not. Write once per gate transition (`lastAppliedIndoor` cache) — re-apply every poll if HITL shows G1R snap-back (escalate to #6 post-tick hook). When `IsUnderRoof` is unreadable, log once and hold current sky state.
 _Avoid_: frame hook, tick hook
 
 ## Flagged ambiguities
