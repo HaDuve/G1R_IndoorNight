@@ -1,6 +1,6 @@
 # G1R_IndoorNight
 
-UE4SS Lua mod for **Gothic 1 Remake**. Pushes Ultra Dynamic Sky toward **moonlit night** when the player is indoors, using occlusion-blended adjustments. Game clock is untouched.
+UE4SS Lua mod for **Gothic 1 Remake**. Dims Ultra Dynamic Sky when the player is **under roof** (`IsUnderRoof` gate). Game clock is untouched. **Lever policy** (what we may write vs user-owned exposure): [CONTEXT.md](./CONTEXT.md) → **Lever Boundaries**.
 
 See [CONTEXT.md](./CONTEXT.md) for domain terms and design decisions.
 
@@ -37,16 +37,12 @@ G1R_IndoorNight/Scripts/main.lua
 
 ## Usage
 
-- **F7** — toggle mod on/off mid-session (instant restore when off)
-- **F8** — discovery snapshot (when `DISCOVERY_MODE = true`; read-only UDS + **Inside Detection** dump to console)
-- **F10** — TOD write spike (Slice 2c; rejected). F9 = G1R quickload.
-- **F11** — G1R skylight lever spike (v3 moderate profile)
-- **F12** — restore day baseline after F11 spike
-- On by default at load
+- **F7** — toggle mod on/off mid-session (instant day restore when off)
+- On by default at load; polls `IsUnderRoof` every `PASS_MS` and applies v3.1 indoor dimming or day baseline
 
-### Discovery mode (Slice 1)
+### Discovery mode (dev only)
 
-With `DISCOVERY_MODE = true`, the mod performs **zero UDS writes**. Press **F8** at each pose in [docs/DISCOVERY.md](./docs/DISCOVERY.md) and paste console output into that doc for lever selection.
+Set `DISCOVERY_MODE = true` to re-enable read-only F8 snapshots and F10/F11/F12 spikes. See [docs/DISCOVERY.md](./docs/DISCOVERY.md).
 
 ## Config
 
@@ -61,7 +57,7 @@ Edit `Scripts/main.lua` — CONFIG block at top. No rebuild; save and relaunch (
 | `OCCLUSION_FULL` | `1.0` | Full night-level sky contribution at max occlusion |
 | `PASS_MS` | `100` | Poll interval |
 | `DEBUG` | `false` | Log occlusion / TOD to UE4SS console |
-| `DISCOVERY_MODE` | `true` | Read-only instrumentation; disables sky writes |
+| `DISCOVERY_MODE` | `false` | Read-only instrumentation; disables sky writes when `true` |
 | `SNAPSHOT_KEY` | `Key.F8` | Print filtered UDS candidate snapshot |
 | `TOD_SPIKE_ENABLED` | `true` | F10 one-shot TOD write test (Slice 2c; discovery mode only) |
 | `TOD_SPIKE_KEY` | `Key.F10` | Key for TOD spike (avoid F9 = G1R quickload) |
@@ -73,4 +69,4 @@ Edit `Scripts/main.lua` — CONFIG block at top. No rebuild; save and relaunch (
 
 ## Status
 
-Slice 2b complete — **`IsUnderRoof` accepted** as Inside gate (F8 HITL). Slice 2d v3.1 lever ready. Next: Slice 3 auto-apply. See [Discovery Protocol](./docs/DISCOVERY.md).
+Slice 3 shipped — **v3.3.12 (HITL accepted)** auto indoor dimming on **`IsUnderRoof`**; day/night split profiles; F7 toggle. See [CONTEXT.md](./CONTEXT.md) (lever rules) and [DISCOVERY.md](./docs/DISCOVERY.md) (accepted targets).

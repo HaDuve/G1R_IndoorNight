@@ -21,8 +21,55 @@ Player `Engine.ini` tuning for max performance — Lumen off, shadows off, reduc
 _Avoid_: max perf mode, darkness tweaks
 
 **Indoor Sky Dimming**:
-While the player is **Inside**, the mod blends Sun / Sky Lighting toward **night-level sky contribution** — lower skylight intensity, not a global sky flip. Goal is to match how interiors already look at night, not to display a moon or night sky aesthetic. Blend strength tracks **Inside Detection** when available; blending **starts at ~0.5** on that signal; below that, sky stays vanilla. Local light sources (torches, fires) stay at vanilla brightness. Toggle F7; off = instant restore. Default enabled.
+While the player is **Inside** (`IsUnderRoof=true`), the mod dims **sky contribution** toward a unified dark-cave feel — not a global sky flip or moonlit aesthetic. **Day Game Clock:** crushed skylight multipliers + `SetSettings` dim bundle. **Night Game Clock:** clear day crush, native night + torches, skylight/moon brightness lifts — **no exposure writes** (see **Lever Boundaries**). When **Outside**, day baseline is restored via **Sky Transition**. Local light sources (torches, fires) stay at vanilla brightness. **F7** toggle off = **instant** day restore (manual escape hatch; no blend). Default enabled.
 _Avoid_: indoor night override, moonlit night mode
+
+**Extra Interior Exposure**:
+G1R graphics user setting mapped to UDS **`Exposure Bias in Interior`**. **Owned by the player** while indoors — the mod must not write this field on the indoor poll path (day or night). Brightness tuning uses skylight, `NightBrightness`, sun/moon multipliers, and `SetSettings` intensity instead. Outdoor restore and F12 may reset exposure to vanilla baseline.
+_Avoid_: interior exposure mod, exposure crush
+
+**Transition Perceived Brightness**:
+Visible bright/dark swings when crossing the **Inside** gate — caused by simultaneous jumps in the allowed **Implementation Lever** bundle (skylight multipliers, `SetSettings` intensities, sun/directional fields), **not** by writes to **Extra Interior Exposure**. Fix: linearly lerp allowed levers over a **Sky Transition**; do not animate or write `Exposure Bias in Interior` while **Inside**.
+_Avoid_: exposure transition, exposure spike
+
+**Sky Transition**:
+Gradual change between sky profiles when the **Inside** gate confirms or releases. **Enter:** linear lerp of allowed **Implementation Lever** fields toward the target profile over ~4s (`TRANSITION_ENTER_MS`) after **Gate Stability** passes. **Revert:** if the gate flips during pending confirmation or an active enter transition, fast linear lerp (~1s) back to the **Last Stable Profile** (fully outdoor or fully indoor). Does not animate **Extra Interior Exposure** while **Inside**. Game-clock-only `indoor_day` ↔ `indoor_night` swaps while **Inside** are **instant** (not blended).
+_Avoid_: blend transition, fade, crossfade
+
+**Last Stable Profile**:
+The sky lever bundle last fully applied and confirmed — outdoor baseline (`G1R_DAY_RESTORE_*`) or indoor day/night target (`applyIndoorProfile`). Used as the revert target when a **Sky Transition** is cancelled mid-blend.
+_Avoid_: previous state, rollback target
+
+**Lever Boundaries**:
+Hard rules for what Slice 3 may write. Source of truth: `Scripts/main.lua` CONFIG + apply functions (`applyIndoorProfile`, `applyNightIndoorClear`, `applyDayRestore`). **v3.3.12 (HITL accepted).**
+
+| Category | Field / lever | Indoor day | Indoor night | Outdoor leave / F7 off / F12 |
+|----------|---------------|------------|--------------|------------------------------|
+| **Forbidden (never)** | `Time of Day` (raw UDS) | — | — | — |
+| **Forbidden (never)** | Torch / local light actors | — | — | — |
+| **Forbidden (failed)** | `Interior Sky Light Color` struct | skip | skip | — |
+| **Forbidden (failed)** | `SkyLightColorMultiplier*` structs | skip | skip | — |
+| **User-owned** | `Exposure Bias in Interior` | **do not write** | **do not write** | restore vanilla (`G1R_DAY_RESTORE_WRITES`) |
+| **SetSettings** | `SkyLightIntensity`, `OverallIntensity`, `DirectionalBalance` | write | night: partial | restore |
+| **SetSettings** | `NightBrightness` | write (day clock) | write (boost) | restore |
+| **SetSettings** | `SkyLightTemperature`, `Saturation` | **do not write** | write | restore |
+| **SetSettings** | `Contrast` | **do not write** | **do not write** (keeps restore ~0.15) | restore |
+| **SetSettings** | `SunAngle` | write | — | restore |
+| **Multipliers** | `Dynamic/Target Sky Light Multiplier`, interior skylight mult | **0.42** | **1.0** (clear crush) | **1.0** |
+| **Flag** | `Apply Interior Adjustments` | **true** | **false** | **false** |
+| **Direct UDS** | Sun / directional crush fields | write | restore values (not exposure) | restore |
+| **Direct UDS** | `Sky Light Intensity Mult in Interiors` | via multipliers | **1.20** | restore |
+| **Direct UDS** | `Moon Light Intensity Mult in Interiors` | — | **1.15** | restore |
+
+**Accepted Indoor Profile (v3.3.12)**:
+HITL-accepted values in `Scripts/main.lua` CONFIG — day: `G1R_SETTINGS_INDOOR_DAY_PROFILE` + `G1R_DIRECT_INDOOR_DAY_WRITES` + skylight mult **0.42** (no day hue); night: `applyNightIndoorClear` + `G1R_NIGHT_INDOOR_BRIGHTNESS_WRITES` + `G1R_SETTINGS_INDOOR_NIGHT_SKYLIGHT_HUE`. Outdoor restore: `G1R_DAY_RESTORE_*` / F12.
+
+**Implementation Lever**:
+Multi-write bundle on `Ultra_Dynamic_Sky_C` — **`SetSettings`** (`UltraDynamicSkySettings`), **sky light multipliers**, **`Apply Interior Adjustments`**, and direct **sun / directional** fields. **Not** routine exposure writes indoors (see **Extra Interior Exposure**). Controller: `Gothic_Ultra_Dynamic_Controller_C` syncs sky but lever writes target UDS actor. ~~Time of Day~~ rejected (Slice 2c).
+_Avoid_: override mechanism, sky hack, TOD hack
+
+**Accepted Indoor Profile (v3.1)**:
+Superseded for ship by **Accepted Indoor Profile (v3.3.12)**. Retained in `docs/DISCOVERY.md` Slice 2d as spike reference only.
 
 **Night-Level Sky Contribution**:
 The amount of skylight / ambient sky fill that reads as acceptable indoors during daytime Game Clock. **Accepted approximation:** G1R `SetSettings` + skylight multiplier bundle (Slice 2d v3.1 in CONFIG), not raw Time of Day.
@@ -39,13 +86,6 @@ _Avoid_: interior, enclosed area
 **Inside Detection**:
 How the mod decides the player is Inside before blending. UDS Player Occlusion inactive in G1R (Slice 2a). **Accepted gate (Slice 2b):** `EnvironmentManagerCharacterStatics:IsUnderRoof(playerPawn)` — false outdoor, true in New Camp house HITL. F8 also probes `IndoorDetectionComponent` (`DetectionConfidence`; `bDetectedIsIndoor` stuck false). Ship fallback: F7 manual toggle.
 _Avoid_: occlusion check, indoor trigger
-
-**Implementation Lever**:
-Multi-write bundle on `Ultra_Dynamic_Sky_C` — **`SetSettings`** (`UltraDynamicSkySettings`), **sky light multipliers**, **`Apply Interior Adjustments`**, and direct **sun / directional / exposure** fields. Confirmed Slice 2d (v3.1). Controller: `Gothic_Ultra_Dynamic_Controller_C` syncs sky but lever writes target UDS actor. ~~Time of Day~~ rejected (Slice 2c).
-_Avoid_: override mechanism, sky hack, TOD hack
-
-**Accepted Indoor Profile (v3.1)**:
-HITL-tuned spike values in `G1R_SETTINGS_NIGHT_PROFILE`, `G1R_DIRECT_NIGHT_WRITES`, `G1R_SKY_MULTIPLIER_TARGET` — full table in `docs/DISCOVERY.md` Slice 2d. Outdoor restore: `G1R_DAY_RESTORE_*` / F12.
 
 **Discovery Protocol**:
 Three in-game poses on the same UDS actor: (1) outdoor daytime, occlusion ~0 — baseline; (2) deep indoor daytime (e.g. Old Mine), high occlusion — problem state; (3) same indoor spot at nighttime — reference state. Per pose: dump class name, Player Occlusion, Time of Day, and skylight / Interior Adjustments / lighting-brightness floats. The property delta between poses 2 and 3 selects the Implementation Lever.
@@ -67,8 +107,12 @@ _Avoid_: tie-break, winner rule
 Slice 2a pass: extended read-only snapshots (outdoor vs confirmed indoor, same session) to determine whether UDS Player Occlusion is **alive** (`Running` true and at least one field moves) or **dead** (pivot Inside Detection to G1R native signal; manual F7 as ship fallback).
 _Avoid_: occlusion debug, F8 dump
 
+**Gate Stability**:
+Debounce before arming an enter **Sky Transition**. After the first `IsUnderRoof` flip, the gate must still agree at **1s, 2s, and 3s** checkpoints (same poll interval). Any disagreement resets the window. Prevents doorway/threshold flicker from triggering a blend. Applies only to inside/outside changes — not **F7** (instant), not game-clock `indoor_day` ↔ `indoor_night` swaps (instant).
+_Avoid_: debounce, hysteresis, gate delay
+
 **Apply Strategy**:
-After Inside Detection and Implementation Lever are confirmed, poll-and-write on a configurable interval. Cache outdoor true lever value when below blend threshold; blend toward night-level target by inside strength. Escalate to post-tick hook only if in-game test proves G1R overwrites every frame.
+Poll `IsUnderRoof` every `PASS_MS` (default 100 ms). Modes: `indoor_day` (game clock daytime), `indoor_night` (TOD ≥2000 or ≤600), `outdoor`. **Inside/outside changes:** **Gate Stability** (3s checkpoints at 1s / 2s / 3s) must pass before arming a profile change. **Slice 6a (shipped):** armed → instant apply via `onGateArmed()` (no blend yet). **Slice 6b+ (planned):** armed → **Sky Transition** enter (~4s linear lerp of allowed levers; `TRANSITION_ENTER_MS`); gate flip during pending or active enter → ~1s fast revert to **Last Stable Profile**. **Game-clock-only changes** while **Inside** (`indoor_day` ↔ `indoor_night`): **instant** profile swap (typically once per day via sleep/wait; acceptable one-time spike). **F7** off / on: instant restore or re-poll (no blend). `indoor_night` may still refresh ~2s when stably indoors (frame-fight). Outdoor leave (6a): `G1R_DAY_RESTORE_*` on arm; (6b+) via blend with exposure reset when fully outdoor. When `IsUnderRoof` unavailable, log once and hold state; pending Gate Stability resets after 3s unavailability.
 _Avoid_: frame hook, tick hook
 
 ## Flagged ambiguities
