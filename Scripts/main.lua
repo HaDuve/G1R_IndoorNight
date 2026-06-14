@@ -10,8 +10,12 @@ local TARGET_TOD        = 2300.0    -- UDS 0–2400; ~23:00 moonlit night
 local OCCLUSION_START   = 0.5       -- below: no blend
 local OCCLUSION_FULL    = 1.0       -- at/above: full TARGET_TOD blend
 local PASS_MS           = 100       -- poll interval (ms)
--- Slice 6a: Gate Stability — checkpoint polls at 1s / 2s / 3s before arming enter transition.
-local GATE_STABILITY_CHECKPOINT_POLLS = { 10, 20, 30 }
+-- Slice 6a: Gate Stability — checkpoints at 1s / 2s / 3s (poll counts derived from PASS_MS).
+local GATE_STABILITY_CHECKPOINT_SEC = { 1, 2, 3 }
+local GATE_STABILITY_CHECKPOINT_POLLS = {}
+for i, sec in ipairs(GATE_STABILITY_CHECKPOINT_SEC) do
+    GATE_STABILITY_CHECKPOINT_POLLS[i] = math.max(1, math.floor((sec * 1000) / PASS_MS))
+end
 local DEBUG             = false
 local MOD_BUILD         = "v3.4.0-s6a"  -- boot banner — confirm this string in UE4SS.log after reload
 local INGAME_WARMUP_POLLS = 30      -- ~3s after ClientRestart before sky writes
@@ -291,6 +295,7 @@ local gateStabilityPhase = nil  -- nil | "pending" | "confirmed" | "armed"
 local gatePendingUnderRoof = nil
 local gatePendingPolls = 0
 local gateCheckpointIndex = 0
+local gateUnavailablePolls = 0
 local gateUnavailableLogged = false
 local pollEnabled = false       -- true only after ClientRestart (in-game pawn)
 local ingameWarmupPolls = 0
@@ -1545,6 +1550,7 @@ local function resetGateStability()
     gatePendingUnderRoof = nil
     gatePendingPolls = 0
     gateCheckpointIndex = 0
+    gateUnavailablePolls = 0
 end
 
 local function logGateStability(fromPhase, toPhase, detail)
@@ -1639,9 +1645,18 @@ local function pass()
             gateUnavailableLogged = true
             print("[G1R_IndoorNight] IsUnderRoof unavailable; holding current sky state")
         end
+        if gateStabilityPhase == "pending" then
+            gateUnavailablePolls = gateUnavailablePolls + 1
+            local resetAfter = GATE_STABILITY_CHECKPOINT_POLLS[#GATE_STABILITY_CHECKPOINT_POLLS]
+            if gateUnavailablePolls >= resetAfter then
+                logGateStability("pending", "idle", "IsUnderRoof unavailable — reset")
+                resetGateStability()
+            end
+        end
         return
     end
     gateUnavailableLogged = false
+    gateUnavailablePolls = 0
 
     local tod = readTimeOfDay(uds)
     local gameNight = isGameNight(tod)
@@ -1666,6 +1681,7 @@ local function pass()
     end
 
     if gateStabilityPhase == "pending" then
+        logGateStability("pending", "idle", "returned to stable outdoor — reset")
         resetGateStability()
     end
 
