@@ -11,8 +11,10 @@ local OCCLUSION_START   = 0.5       -- below: no blend
 local OCCLUSION_FULL    = 1.0       -- at/above: full TARGET_TOD blend
 local PASS_MS           = 100       -- poll interval (ms)
 local DEBUG             = false
-local MOD_BUILD         = "v3.2.6"  -- boot banner — confirm this string in UE4SS.log after reload
+local MOD_BUILD         = "v3.3.12"  -- boot banner — confirm this string in UE4SS.log after reload
 local INGAME_WARMUP_POLLS = 30      -- ~3s after ClientRestart before sky writes
+local INDOOR_NIGHT_REFRESH_POLLS = 20  -- re-apply game-night profile ~2s (frame-fight)
+local INDOOR_NIGHT_PROBE_POLLS = 5       -- passive readback ~500ms (detect G1R revert)
 
 -- Discovery mode (Slice 1): read-only UDS instrumentation; no sky writes.
 local DISCOVERY_MODE    = false
@@ -23,36 +25,47 @@ local TOD_SPIKE_KEY     = Key.F10
 -- Slice 2d: G1R skylight / SetSettings lever spike (F11).
 local G1R_LEVER_SPIKE_ENABLED = true
 local G1R_LEVER_SPIKE_KEY     = Key.F11
--- v3.2 HITL (Slice 3): 20% darker than v3.1 day-indoor; game-night uses neutral multipliers (no stack).
+-- v3.3.12 HITL accepted: dark-cave indoor feel; cool skylight hue night only.
 local INDOOR_DARKEN_VS_V31      = 0.80
 local GAME_NIGHT_TOD_START      = 2000   -- UDS 0–2400 (~20:00)
 local GAME_NIGHT_TOD_END          = 600    -- ~06:00
-local G1R_SKY_MULTIPLIER_TARGET   = 0.32   -- v3.1 0.40 × 0.80
+local G1R_SKY_MULTIPLIER_TARGET   = 0.42   -- v3.3.12 day-indoor skylight crush
+local G1R_NIGHT_INTERIOR_SKYLIGHT_MULT = 1.20
+local G1R_NIGHT_INTERIOR_MOON_MULT     = 1.15
+local G1R_INDOOR_SKYLIGHT_TEMP    = -0.60  -- SetSettings: cool / blue-ish (night only)
+local G1R_INDOOR_SATURATION       = 0.92
+local G1R_INDOOR_SKYLIGHT_COLOR   = { R = 0.62, G = 0.76, B = 1.00, A = 1.00 }
+-- Night: hue + skylight brightness; do NOT write Exposure (respect G1R user slider).
+local G1R_SETTINGS_INDOOR_NIGHT_SKYLIGHT_HUE = {
+    SkyLightTemperature = G1R_INDOOR_SKYLIGHT_TEMP,
+    Saturation = G1R_INDOOR_SATURATION,
+    NightBrightness = 0.40,
+    OverallIntensity = 1.08,
+}
 local G1R_SETTINGS_INDOOR_DAY_PROFILE = {
-    SkyLightIntensity = 0.30,
-    OverallIntensity = 0.45,
-    DirectionalBalance = 0.30,
+    SkyLightIntensity = 0.35,   -- v3.3.9 0.29 × 1.20 (+20% brightness)
+    OverallIntensity = 0.86,    -- v3.3.9 0.72 × 1.20 (+20% brightness)
+    DirectionalBalance = 0.08,
     NightBrightness = 0.38,
+    SunAngle = 100.0,             -- zenith; top-down bias via SetSettings (not sun crush)
 }
 local G1R_SETTINGS_INDOOR_NIGHT_PARITY_PROFILE = {
-    SkyLightIntensity = 0.30,
+    SkyLightIntensity = 0.21,
     OverallIntensity = 0.45,
-    DirectionalBalance = 0.30,
+    DirectionalBalance = 0.08,
     NightBrightness = 0.20,
+    SunAngle = 100.0,
 }
 local G1R_DIRECT_INDOOR_DAY_WRITES = {
-    { name = "Sun Light Intensity", target = 0.22 },
-    { name = "Sun Light Intensity Multiplier in Interiors", target = 0.29 },
-    { name = "Directional Lighting Intensity", target = 1.92 },
-    { name = "Exposure Bias in Interior", target = -0.60 },
+    { name = "Sun Light Intensity", target = 0.14 },              -- v3.3.8: restore v3.3.6 (0.08 was pitch black)
+    { name = "Sun Light Intensity Multiplier in Interiors", target = 0.10 },
+    { name = "Directional Lighting Intensity", target = 0.90 },
+    -- Exposure Bias in Interior: not written — respect G1R Extra Interior Exposure slider.
 }
--- Game-night indoor: same SetSettings target as day-indoor; mult 1.0; undo day direct crushes.
-local G1R_DIRECT_INDOOR_NIGHT_CLOCK_WRITES = {
-    { name = "Sun Light Intensity", target = 0.90 },
-    { name = "Sun Light Intensity Multiplier in Interiors", target = 1.0 },
-    { name = "Directional Lighting Intensity", target = 3.00 },
-    { name = "Exposure Bias in Interior", target = 0.20 },
-    { name = "Moon Light Intensity Multiplier in Interiors", target = 1.0 },
+-- Game-night indoor: clear day crush; brighten via skylight/moon (not exposure).
+local G1R_NIGHT_INDOOR_BRIGHTNESS_WRITES = {
+    { name = "Sky Light Intensity Multiplier in Interiors", target = G1R_NIGHT_INTERIOR_SKYLIGHT_MULT },
+    { name = "Moon Light Intensity Multiplier in Interiors", target = G1R_NIGHT_INTERIOR_MOON_MULT },
 }
 -- Legacy names (F11 spike / docs).
 local G1R_SETTINGS_NIGHT_PROFILE = G1R_SETTINGS_INDOOR_DAY_PROFILE
@@ -65,6 +78,9 @@ local G1R_DAY_RESTORE_PROFILE = {
     OverallIntensity = 1.00,
     DirectionalBalance = 1.00,
     NightBrightness = 0.20,
+    SkyLightTemperature = 0.00,
+    Contrast = 0.15,
+    Saturation = 1.00,
 }
 local G1R_DAY_RESTORE_WRITES = {
     { name = "Dynamic Sky Light Multiplier", target = 1.0 },
@@ -272,6 +288,8 @@ local gateUnavailableLogged = false
 local pollEnabled = false       -- true only after ClientRestart (in-game pawn)
 local ingameWarmupPolls = 0
 local udsNotReadyLogged = false
+local indoorNightRefreshPolls = 0
+local indoorNightProbePolls = 0
 
 -- ---- helpers ---------------------------------------------------------------
 local function log(msg)
@@ -543,6 +561,30 @@ local function writeNumericField(obj, name, value)
     if not obj or name == nil or value == nil then return false end
     local ok = pcall(function() obj[name] = value end)
     return ok
+end
+
+local function writeLinearColorField(obj, name, r, g, b, a)
+    if not obj or name == nil then return false end
+    a = a or 1.0
+    local c = select(1, readField(obj, name))
+    if safeObj(c) then
+        local ok = pcall(function()
+            c.R = r
+            c.G = g
+            c.B = b
+            c.A = a
+        end)
+        if ok then return true end
+    end
+    return pcall(function() obj[name] = { R = r, G = g, B = b, A = a } end)
+end
+
+local function applyIndoorSkylightHue(uds)
+    if not uds then return false end
+    local color = G1R_INDOOR_SKYLIGHT_COLOR
+    writeLinearColorField(uds, "Interior Sky Light Color", color.R, color.G, color.B, color.A)
+    applySettingsProfile(uds, G1R_SETTINGS_INDOOR_NIGHT_SKYLIGHT_HUE)
+    return true
 end
 
 -- Slice 2b helpers (after isObjectValue / followObjectLink above).
@@ -1057,29 +1099,81 @@ local function udsReadyForWrites(uds)
     return readSettingsStruct(uds) ~= nil
 end
 
-local function announceApply(mode, tod, uds)
-    local mult, multType = readField(uds, "Dynamic Sky Light Multiplier")
+local function nightStateReverted(uds)
+    local mult = select(1, readField(uds, "Dynamic Sky Light Multiplier"))
     local applyAdj = select(1, readField(uds, "Apply Interior Adjustments"))
+    if mult and math.abs(mult - 1.0) > 0.05 then
+        return true, string.format("mult=%.2f", mult)
+    end
+    if applyAdj == true then
+        return true, "applyInterior=true"
+    end
+    local sun = select(1, readField(uds, "Sun Light Intensity"))
+    if sun and sun < 0.50 then
+        return true, string.format("sun=%.2f", sun)
+    end
+    return false
+end
+
+local function logNightReadback(uds, tag, checkReversion)
+    if not uds then return end
+    local settings = readSettingsStruct(uds)
+    local fields = settings and readSettingsFields(settings) or {}
+    local mult = select(1, readField(uds, "Dynamic Sky Light Multiplier"))
+    local applyAdj = select(1, readField(uds, "Apply Interior Adjustments"))
+    local sun = select(1, readField(uds, "Sun Light Intensity"))
+    local exp = select(1, readField(uds, "Exposure Bias in Interior"))
+    local nightB = select(1, readField(uds, "Night Brightness"))
     print(string.format(
-        "[G1R_IndoorNight] apply mode=%s tod=%.0f mult=%s applyInterior=%s build=%s",
-        mode,
-        tod or -1,
-        multType == "number" and string.format("%.2f", mult) or "?",
+        "[DEBUG-night] %s mult=%.2f applyInterior=%s SkyLI=%.2f Overall=%.2f Temp=%.2f Contrast=%.2f NightB_set=%.2f NightB_uds=%.2f Sun=%.2f Exp=%.2f",
+        tag,
+        mult or -1,
         applyAdj == nil and "?" or (applyAdj and "true" or "false"),
-        MOD_BUILD
+        fields.SkyLightIntensity or -1,
+        fields.OverallIntensity or -1,
+        fields.SkyLightTemperature or -1,
+        fields.Contrast or -1,
+        fields.NightBrightness or -1,
+        nightB or -1,
+        sun or -1,
+        exp or -1
     ))
+    if checkReversion then
+        local reverted, reason = nightStateReverted(uds)
+        if reverted then
+            print(string.format("[DEBUG-night] REVERTED %s reason=%s", tag, reason))
+        end
+    end
+end
+
+local function applyDayRestore(uds)
+    if not uds then return false end
+    pcall(function() uds["Apply Interior Adjustments"] = false end)
+    applySettingsProfile(uds, G1R_DAY_RESTORE_PROFILE)
+    for _, entry in ipairs(G1R_DAY_RESTORE_WRITES) do
+        writeNumericField(uds, entry.name, entry.target)
+    end
+    return true
+end
+
+local function applyNightIndoorClear(uds)
+    -- Undo day-indoor crush; leave Exposure Bias in Interior for G1R Extra Interior Exposure slider.
+    pcall(function() uds["Apply Interior Adjustments"] = false end)
+    applySettingsProfile(uds, G1R_DAY_RESTORE_PROFILE)
+    for _, entry in ipairs(G1R_DAY_RESTORE_WRITES) do
+        if entry.name ~= "Exposure Bias in Interior" then
+            writeNumericField(uds, entry.name, entry.target)
+        end
+    end
+    return true
 end
 
 local function applyIndoorNightParity(uds)
-    pcall(function() uds["Apply Interior Adjustments"] = false end)
-    for _, name in ipairs(G1R_SKY_MULTIPLIER_FIELDS) do
-        writeNumericField(uds, name, 1.0)
-    end
-    -- Same SetSettings bundle as day-indoor (visual target); no extra dim via multipliers/direct crush.
-    applySettingsProfile(uds, G1R_SETTINGS_INDOOR_NIGHT_PARITY_PROFILE)
-    for _, entry in ipairs(G1R_DIRECT_INDOOR_NIGHT_CLOCK_WRITES) do
+    applyNightIndoorClear(uds)
+    for _, entry in ipairs(G1R_NIGHT_INDOOR_BRIGHTNESS_WRITES) do
         writeNumericField(uds, entry.name, entry.target)
     end
+    applyIndoorSkylightHue(uds)
 end
 
 local function applyIndoorProfile(uds, gameNight)
@@ -1095,6 +1189,7 @@ local function applyIndoorProfile(uds, gameNight)
         for _, entry in ipairs(G1R_DIRECT_INDOOR_DAY_WRITES) do
             writeNumericField(uds, entry.name, entry.target)
         end
+        -- Day: no hue writes (temperature/contrast/saturation/color)
     end
     return true
 end
@@ -1103,14 +1198,20 @@ local function applyNightProfile(uds)
     return applyIndoorProfile(uds, false)
 end
 
-local function applyDayRestore(uds)
-    if not uds then return false end
-    pcall(function() uds["Apply Interior Adjustments"] = false end)
-    applySettingsProfile(uds, G1R_DAY_RESTORE_PROFILE)
-    for _, entry in ipairs(G1R_DAY_RESTORE_WRITES) do
-        writeNumericField(uds, entry.name, entry.target)
+local function announceApply(mode, tod, uds)
+    local mult, multType = readField(uds, "Dynamic Sky Light Multiplier")
+    local applyAdj = select(1, readField(uds, "Apply Interior Adjustments"))
+    print(string.format(
+        "[G1R_IndoorNight] apply mode=%s tod=%.0f mult=%s applyInterior=%s build=%s",
+        mode,
+        tod or -1,
+        multType == "number" and string.format("%.2f", mult) or "?",
+        applyAdj == nil and "?" or (applyAdj and "true" or "false"),
+        MOD_BUILD
+    ))
+    if mode == "indoor_night" or mode == "indoor_day" then
+        logNightReadback(uds, mode .. " after apply", mode == "indoor_night")
     end
-    return true
 end
 
 local function runG1rLeverSpike()
@@ -1477,6 +1578,8 @@ local function pass()
     local modeChanged = mode ~= lastAppliedMode
 
     if mode == "outdoor" then
+        indoorNightRefreshPolls = 0
+        indoorNightProbePolls = 0
         if wasIndoorMode(lastAppliedMode) then
             applyDayRestore(uds)
             announceApply(mode, tod, uds)
@@ -1485,9 +1588,30 @@ local function pass()
         return
     end
 
+    if mode == "indoor_night" then
+        indoorNightRefreshPolls = indoorNightRefreshPolls + 1
+        indoorNightProbePolls = indoorNightProbePolls + 1
+        if modeChanged or indoorNightRefreshPolls >= INDOOR_NIGHT_REFRESH_POLLS then
+            applyIndoorProfile(uds, true)
+            announceApply(mode, tod, uds)
+            indoorNightRefreshPolls = 0
+            indoorNightProbePolls = 0
+        elseif indoorNightProbePolls >= INDOOR_NIGHT_PROBE_POLLS then
+            indoorNightProbePolls = 0
+            local reverted = nightStateReverted(uds)
+            if reverted then
+                logNightReadback(uds, "probe between refresh", true)
+            end
+        end
+        lastAppliedMode = "indoor_night"
+        return
+    end
+
+    indoorNightRefreshPolls = 0
+    indoorNightProbePolls = 0
     if not modeChanged then return end
 
-    applyIndoorProfile(uds, mode == "indoor_night")
+    applyIndoorProfile(uds, false)
     announceApply(mode, tod, uds)
     lastAppliedMode = mode
 end
@@ -1567,9 +1691,10 @@ RegisterKeyBind(TOGGLE_KEY, function()
 end)
 
 RegisterLoadMapPostHook(function(Engine, World)
-    -- Sublevel streaming also fires LoadMap — do NOT clear pollEnabled (that killed the poll loop).
     lastAppliedMode = nil
     ingameWarmupPolls = 0
+    indoorNightRefreshPolls = 0
+    indoorNightProbePolls = 0
 end)
 
 RegisterHook("/Script/Engine.PlayerController:ClientRestart", function(self, NewPawn)

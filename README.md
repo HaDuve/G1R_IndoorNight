@@ -1,6 +1,6 @@
 # G1R_IndoorNight
 
-UE4SS Lua mod for **Gothic 1 Remake**. Dims Ultra Dynamic Sky when the player is **under roof** (`IsUnderRoof` gate) via the accepted v3.1 skylight lever. Game clock is untouched.
+UE4SS Lua mod for **Gothic 1 Remake**. Dims Ultra Dynamic Sky when the player is **under roof** (`IsUnderRoof` gate). Game clock is untouched. **Lever policy** (what we may write vs user-owned exposure): [CONTEXT.md](./CONTEXT.md) → **Lever Boundaries**.
 
 See [CONTEXT.md](./CONTEXT.md) for domain terms and design decisions.
 
@@ -69,4 +69,4 @@ Edit `Scripts/main.lua` — CONFIG block at top. No rebuild; save and relaunch (
 
 ## Status
 
-Slice 3 shipped — auto indoor dimming on **`IsUnderRoof`** with v3.1 lever; F7 toggle + day restore. HITL tuning: issue #5. See [Discovery Protocol](./docs/DISCOVERY.md).
+Slice 3 shipped — **v3.3.12 (HITL accepted)** auto indoor dimming on **`IsUnderRoof`**; day/night split profiles; F7 toggle. See [CONTEXT.md](./CONTEXT.md) (lever rules) and [DISCOVERY.md](./docs/DISCOVERY.md) (accepted targets).

@@ -1,22 +1,49 @@
 # Discovery Protocol — Slice 1
 
-**Status:** … **Slice 3 v3.2 (HITL tuning on PR #11).** Next: re-test day/night indoor parity, then #5 gate tuning.
+**Status:** **Slice 3 v3.3.12 (HITL accepted).** Tracker issues #1, #4, #5, #6 closed (2026-06-14).
 
-## Slice 3 — Auto Apply on `IsUnderRoof` (**v3.2 HITL tuning**)
+## Slice 3 — Auto Apply on `IsUnderRoof` (**v3.3.12 shipped — HITL accepted**)
 
-**Shipped (2026-06-14, PR #11):** `DISCOVERY_MODE = false`; poll `IsUnderRoof` every 100 ms; apply indoor profile when under roof; `G1R_DAY_RESTORE_*` when not; F7 off = instant day restore.
+**Shipped:** `DISCOVERY_MODE = false`; poll `IsUnderRoof` every 100 ms; modes `indoor_day` / `indoor_night` / `outdoor`; F7 toggle + day restore.
 
-**HITL (2026-06-14, user):**
+**Lever policy (HITL 2026-06-14):** See **`CONTEXT.md` → Lever Boundaries**. Summary: **never write `Exposure Bias in Interior` while indoors** (player **Extra Interior Exposure** owns it). Never write raw TOD or local lights. Night brightness via `NightBrightness`, skylight/moon multipliers, `OverallIntensity` — not exposure.
+
+**HITL (2026-06-14, v3.3.12 — accepted):**
 
 | Check | Result |
 |-------|--------|
-| Outdoor daytime baseline | **Pass** |
-| Indoor dimming (day Game Clock) | **Partial** — v3.1 too bright; v3.2 −20% |
-| Indoor dimming (night Game Clock) | **Fail** — pitch black; multipliers stacked with native night |
-| F7 off / on toggle | _not re-tested on v3.2_ |
-| Game Clock unchanged | _assumed pass (no TOD writes)_ |
+| Outdoor daytime / night baseline | **Pass** |
+| Indoor day (dim + cave feel) | **Pass** — v3.3.12 (crush 0.42, no hue) |
+| Indoor night (torches, readability) | **Pass** — v3.3.4+ (no exposure writes) |
+| Extra Interior Exposure respected indoors | **Pass** |
+| Game Clock unchanged | **Pass** |
+| F7 off / on toggle | **Pass** |
 
-**v3.2 fix:** Day-indoor = v3.1 × 0.80 (multipliers 0.32, darker SetSettings/direct writes). Game-night indoor = same SetSettings brightness targets but **neutral skylight multipliers (1.0)**, **omit `NightBrightness`**, reset interior sun/moon mults + exposure to day-restore baseline — avoids double-dimming with native night.
+**Accepted targets (v3.3.12)** — `Scripts/main.lua` CONFIG:
+
+| Lever | Indoor day | Indoor night |
+|-------|------------|--------------|
+| Skylight multipliers | **0.42** | **1.0** |
+| `Apply Interior Adjustments` | **true** | **false** |
+| `SetSettings.SkyLightIntensity` | **0.35** | restore **1.0** |
+| `SetSettings.OverallIntensity` | **0.86** | **1.08** |
+| `SetSettings.DirectionalBalance` | **0.08** | restore **1.0** |
+| `SetSettings.NightBrightness` | **0.38** | **0.40** |
+| `SetSettings.Contrast` | *(not written)* | *(not written)* |
+| `SetSettings.SkyLightTemperature` | *(not written)* | **-0.60** |
+| `SetSettings.Saturation` | *(not written)* | **0.92** |
+| `SetSettings.SunAngle` | **100** | — |
+| `Sun Light Intensity` | **0.14** | **0.90** |
+| `Sun Light Intensity Mult in Interiors` | **0.10** | **1.0** |
+| `Directional Lighting Intensity` | **0.90** | **3.0** |
+| `Sky Light Intensity Mult in Interiors` | **0.42** (via mult) | **1.20** |
+| `Moon Light Intensity Mult in Interiors` | — | **1.15** |
+| **`Exposure Bias in Interior`** | **do not write** | **do not write** |
+
+**Historical (v3.2):** Day-indoor crush experiment; game-night double-dim fixed in v3.2.6–v3.3.x. Exposure-based night tuning abandoned v3.3.4 (fought user slider).
+
+<details>
+<summary>v3.2 table (archive)</summary>
 
 | Lever (v3.2 day-indoor) | Target |
 |-------------------------|--------|
@@ -28,9 +55,9 @@
 | `Sun Light Intensity` | **0.22** |
 | `Sun Light Intensity Multiplier in Interiors` | **0.29** |
 | `Directional Lighting Intensity` | **1.92** |
-| `Exposure Bias in Interior` | **-0.60** |
+| `Exposure Bias in Interior` | ~~**-0.60**~~ → **not written (v3.3.6)** |
 
-Game-night indoor: SetSettings rows above (no NightBrightness); multipliers **1.0**; interior sun/moon mults **1.0**; exposure **0.20**.
+</details>
 
 ## Slice 2d — G1R Skylight Lever Spike (**COMPLETE — ACCEPTED**)
 
