@@ -21,20 +21,38 @@ local TOD_SPIKE_KEY     = Key.F10
 -- Slice 2d: G1R skylight / SetSettings lever spike (F11).
 local G1R_LEVER_SPIKE_ENABLED = true
 local G1R_LEVER_SPIKE_KEY     = Key.F11
-local G1R_SKY_MULTIPLIER_TARGET = 0.40   -- ACCEPTED v3.1 (Slice 2d HITL)
--- Accepted indoor target — Slice 3 applies when Inside; F11 spike uses same values.
-local G1R_SETTINGS_NIGHT_PROFILE = {
-    SkyLightIntensity = 0.37,
-    OverallIntensity = 0.56,
-    DirectionalBalance = 0.38,
-    NightBrightness = 0.48,
+-- v3.2 HITL (Slice 3): 20% darker than v3.1 day-indoor; game-night uses neutral multipliers (no stack).
+local INDOOR_DARKEN_VS_V31      = 0.80
+local GAME_NIGHT_TOD_START      = 2000   -- UDS 0–2400 (~20:00)
+local GAME_NIGHT_TOD_END          = 600    -- ~06:00
+local G1R_SKY_MULTIPLIER_TARGET   = 0.32   -- v3.1 0.40 × 0.80
+local G1R_SKY_MULTIPLIER_NEUTRAL  = 1.00   -- game-night indoor: don't stack on native night
+local G1R_SETTINGS_INDOOR_DAY_PROFILE = {
+    SkyLightIntensity = 0.30,
+    OverallIntensity = 0.45,
+    DirectionalBalance = 0.30,
+    NightBrightness = 0.38,
 }
-local G1R_DIRECT_NIGHT_WRITES = {
-    { name = "Sun Light Intensity", target = 0.28 },
-    { name = "Sun Light Intensity Multiplier in Interiors", target = 0.36 },
-    { name = "Directional Lighting Intensity", target = 2.40 },
-    { name = "Exposure Bias in Interior", target = -0.50 },
+local G1R_DIRECT_INDOOR_DAY_WRITES = {
+    { name = "Sun Light Intensity", target = 0.22 },
+    { name = "Sun Light Intensity Multiplier in Interiors", target = 0.29 },
+    { name = "Directional Lighting Intensity", target = 1.92 },
+    { name = "Exposure Bias in Interior", target = -0.60 },
 }
+-- Same SetSettings brightness as day-indoor; omit NightBrightness; neutral skylight mults.
+local G1R_SETTINGS_INDOOR_NIGHT_CLOCK_PROFILE = {
+    SkyLightIntensity = 0.30,
+    OverallIntensity = 0.45,
+    DirectionalBalance = 0.30,
+}
+local G1R_DIRECT_INDOOR_NIGHT_CLOCK_WRITES = {
+    { name = "Sun Light Intensity Multiplier in Interiors", target = 1.0 },
+    { name = "Moon Light Intensity Multiplier in Interiors", target = 1.0 },
+    { name = "Exposure Bias in Interior", target = 0.20 },
+}
+-- Legacy names (F11 spike / docs).
+local G1R_SETTINGS_NIGHT_PROFILE = G1R_SETTINGS_INDOOR_DAY_PROFILE
+local G1R_DIRECT_NIGHT_WRITES = G1R_DIRECT_INDOOR_DAY_WRITES
 -- F12: restore day baseline after spike (reload also works).
 local G1R_LEVER_RESET_ENABLED = true
 local G1R_LEVER_RESET_KEY     = Key.F12
@@ -245,7 +263,7 @@ local udsCache = nil
 local gothicControllerCache = nil
 local playerControllerCache = nil
 local snapshotCount = 0
-local lastAppliedIndoor = nil   -- nil | true (night) | false (day)
+local lastAppliedMode = nil   -- nil | "outdoor" | "indoor_day" | "indoor_night"
 local gateUnavailableLogged = false
 
 -- ---- helpers ---------------------------------------------------------------
@@ -958,6 +976,11 @@ local function readTimeOfDay(uds)
     return v, name
 end
 
+local function isGameNight(tod)
+    if tod == nil then return false end
+    return tod >= GAME_NIGHT_TOD_START or tod <= GAME_NIGHT_TOD_END
+end
+
 local TOD_WRITE_ALIASES = {
     "Time of Day",
     "TimeOfDay",
@@ -1022,17 +1045,31 @@ local function spikeWriteLine(lines, label, before, target, after, writeOk)
     lines[#lines + 1] = string.format("      assessment = %s", assessReadback(before, target, after))
 end
 
-local function applyNightProfile(uds)
+local function applyIndoorProfile(uds, gameNight)
     if not uds then return false end
-    for _, name in ipairs(G1R_SKY_MULTIPLIER_FIELDS) do
-        writeNumericField(uds, name, G1R_SKY_MULTIPLIER_TARGET)
-    end
     pcall(function() uds["Apply Interior Adjustments"] = true end)
-    applySettingsProfile(uds, G1R_SETTINGS_NIGHT_PROFILE)
-    for _, entry in ipairs(G1R_DIRECT_NIGHT_WRITES) do
-        writeNumericField(uds, entry.name, entry.target)
+    if gameNight then
+        for _, name in ipairs(G1R_SKY_MULTIPLIER_FIELDS) do
+            writeNumericField(uds, name, G1R_SKY_MULTIPLIER_NEUTRAL)
+        end
+        applySettingsProfile(uds, G1R_SETTINGS_INDOOR_NIGHT_CLOCK_PROFILE)
+        for _, entry in ipairs(G1R_DIRECT_INDOOR_NIGHT_CLOCK_WRITES) do
+            writeNumericField(uds, entry.name, entry.target)
+        end
+    else
+        for _, name in ipairs(G1R_SKY_MULTIPLIER_FIELDS) do
+            writeNumericField(uds, name, G1R_SKY_MULTIPLIER_TARGET)
+        end
+        applySettingsProfile(uds, G1R_SETTINGS_INDOOR_DAY_PROFILE)
+        for _, entry in ipairs(G1R_DIRECT_INDOOR_DAY_WRITES) do
+            writeNumericField(uds, entry.name, entry.target)
+        end
     end
     return true
+end
+
+local function applyNightProfile(uds)
+    return applyIndoorProfile(uds, false)
 end
 
 local function applyDayRestore(uds)
@@ -1086,7 +1123,7 @@ local function runG1rLeverSpike()
     end
 
     applyNightProfile(uds)
-    lines[#lines + 1] = "  [write attempts — v3.1 night profile via applyNightProfile()]"
+    lines[#lines + 1] = "  [write attempts — v3.2 day-indoor via applyIndoorProfile(day)]"
     for _, name in ipairs(G1R_SKY_MULTIPLIER_FIELDS) do
         local after = select(1, readField(uds, name))
         if after ~= nil then
@@ -1364,7 +1401,7 @@ local function discoverySnapshot()
     end
 end
 
--- ---- main pass (Slice 3: IsUnderRoof gate + v3.1 lever) --------------------
+-- ---- main pass (Slice 3: IsUnderRoof gate + v3.2 lever) --------------------
 local function pass()
     if DISCOVERY_MODE then return end
     if not modEnabled then return end
@@ -1388,24 +1425,36 @@ local function pass()
     end
     gateUnavailableLogged = false
 
-    if underRoof then
-        if lastAppliedIndoor == true then return end
-        applyNightProfile(uds)
-        lastAppliedIndoor = true
-        log("indoor: v3.1 night profile applied (IsUnderRoof=true)")
-    else
-        if lastAppliedIndoor == false then return end
+    local tod = readTimeOfDay(uds)
+    local gameNight = isGameNight(tod)
+    local mode = underRoof and (gameNight and "indoor_night" or "indoor_day") or "outdoor"
+
+    if mode == lastAppliedMode then return end
+
+    if mode == "outdoor" then
         applyDayRestore(uds)
-        lastAppliedIndoor = false
         log("outdoor: day baseline restored (IsUnderRoof=false)")
+    elseif mode == "indoor_night" then
+        applyIndoorProfile(uds, true)
+        log(string.format(
+            "indoor: game-night parity profile (IsUnderRoof=true, tod=%.0f)",
+            tod or -1
+        ))
+    else
+        applyIndoorProfile(uds, false)
+        log(string.format(
+            "indoor: v3.2 day profile (IsUnderRoof=true, tod=%.0f)",
+            tod or -1
+        ))
     end
+    lastAppliedMode = mode
 end
 
 local function setModEnabled(next)
     if modEnabled == next then return end
     modEnabled = next
     if not modEnabled then
-        lastAppliedIndoor = nil
+        lastAppliedMode = nil
         local uds = findUds()
         if uds then
             applyDayRestore(uds)
@@ -1430,7 +1479,7 @@ if DISCOVERY_MODE then
     print("[G1R_IndoorNight] loaded — DISCOVERY MODE (F8 = snapshot (Slice 2b inside detection)" .. spikeHint .. "; output -> snapshots.log + UE4SS.log)")
 else
     print(string.format(
-        "[G1R_IndoorNight] loaded — Slice 3 (F7 toggle; IsUnderRoof gate; poll %dms)",
+        "[G1R_IndoorNight] loaded — Slice 3 v3.2 (F7 toggle; IsUnderRoof gate; poll %dms)",
         PASS_MS
     ))
 end

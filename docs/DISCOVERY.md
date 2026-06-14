@@ -1,21 +1,36 @@
 # Discovery Protocol — Slice 1
 
-**Status:** Slice 1 complete. **Slice 2a complete (UDS occlusion INACTIVE).** **Slice 2c complete (TOD REJECTED).** **Slice 2d complete (G1R lever ACCEPTED — v3.1).** **Slice 2b complete (Inside Detection — `IsUnderRoof` ACCEPTED).** **Slice 3 implemented (PR #11 — pending HITL).** Next: HITL verify #4 ACs, then #5 gate tuning.
+**Status:** … **Slice 3 v3.2 (HITL tuning on PR #11).** Next: re-test day/night indoor parity, then #5 gate tuning.
 
-## Slice 3 — Auto Apply v3.1 on `IsUnderRoof` (**IMPLEMENTED — pending HITL**)
+## Slice 3 — Auto Apply on `IsUnderRoof` (**v3.2 HITL tuning**)
 
-**Shipped (2026-06-14, PR #11):** `DISCOVERY_MODE = false`; poll `IsUnderRoof` every 100 ms; apply v3.1 when under roof; `G1R_DAY_RESTORE_*` when not; F7 off = instant day restore.
+**Shipped (2026-06-14, PR #11):** `DISCOVERY_MODE = false`; poll `IsUnderRoof` every 100 ms; apply indoor profile when under roof; `G1R_DAY_RESTORE_*` when not; F7 off = instant day restore.
+
+**HITL (2026-06-14, user):**
 
 | Check | Result |
 |-------|--------|
-| Outdoor daytime baseline | _pending HITL_ |
-| Indoor dimming (New Camp house) | _pending HITL_ |
-| Indoor dimming (Old Mine) | _pending HITL_ |
-| F7 off / on toggle | _pending HITL_ |
-| Game Clock unchanged | _pending HITL_ |
-| Frame-fight / snap-back | _pending HITL_ |
+| Outdoor daytime baseline | **Pass** |
+| Indoor dimming (day Game Clock) | **Partial** — v3.1 too bright; v3.2 −20% |
+| Indoor dimming (night Game Clock) | **Fail** — pitch black; multipliers stacked with native night |
+| F7 off / on toggle | _not re-tested on v3.2_ |
+| Game Clock unchanged | _assumed pass (no TOD writes)_ |
 
-**HITL protocol:** Run PR #11 test plan; record results here and check off issue #4 ACs.
+**v3.2 fix:** Day-indoor = v3.1 × 0.80 (multipliers 0.32, darker SetSettings/direct writes). Game-night indoor = same SetSettings brightness targets but **neutral skylight multipliers (1.0)**, **omit `NightBrightness`**, reset interior sun/moon mults + exposure to day-restore baseline — avoids double-dimming with native night.
+
+| Lever (v3.2 day-indoor) | Target |
+|-------------------------|--------|
+| Skylight multipliers | **0.32** |
+| `SetSettings.SkyLightIntensity` | **0.30** |
+| `SetSettings.OverallIntensity` | **0.45** |
+| `SetSettings.DirectionalBalance` | **0.30** |
+| `SetSettings.NightBrightness` | **0.38** (day clock only) |
+| `Sun Light Intensity` | **0.22** |
+| `Sun Light Intensity Multiplier in Interiors` | **0.29** |
+| `Directional Lighting Intensity` | **1.92** |
+| `Exposure Bias in Interior` | **-0.60** |
+
+Game-night indoor: SetSettings rows above (no NightBrightness); multipliers **1.0**; interior sun/moon mults **1.0**; exposure **0.20**.
 
 ## Slice 2d — G1R Skylight Lever Spike (**COMPLETE — ACCEPTED**)
 
