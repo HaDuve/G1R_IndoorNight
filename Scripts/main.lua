@@ -11,7 +11,7 @@ local OCCLUSION_START   = 0.5       -- below: no blend
 local OCCLUSION_FULL    = 1.0       -- at/above: full TARGET_TOD blend
 local PASS_MS           = 100       -- poll interval (ms)
 local DEBUG             = false
-local MOD_BUILD         = "v3.2.5"  -- boot banner — confirm this string in UE4SS.log after reload
+local MOD_BUILD         = "v3.2.6"  -- boot banner — confirm this string in UE4SS.log after reload
 local INGAME_WARMUP_POLLS = 30      -- ~3s after ClientRestart before sky writes
 
 -- Discovery mode (Slice 1): read-only UDS instrumentation; no sky writes.
@@ -34,20 +34,26 @@ local G1R_SETTINGS_INDOOR_DAY_PROFILE = {
     DirectionalBalance = 0.30,
     NightBrightness = 0.38,
 }
+local G1R_SETTINGS_INDOOR_NIGHT_PARITY_PROFILE = {
+    SkyLightIntensity = 0.30,
+    OverallIntensity = 0.45,
+    DirectionalBalance = 0.30,
+    NightBrightness = 0.20,
+}
 local G1R_DIRECT_INDOOR_DAY_WRITES = {
     { name = "Sun Light Intensity", target = 0.22 },
     { name = "Sun Light Intensity Multiplier in Interiors", target = 0.29 },
     { name = "Directional Lighting Intensity", target = 1.92 },
     { name = "Exposure Bias in Interior", target = -0.60 },
 }
--- Same perceptual target as day-indoor; boosted vs day profile to offset native night baseline.
-local G1R_SETTINGS_INDOOR_NIGHT_CLOCK_PROFILE = {
-    SkyLightIntensity = 0.55,
-    OverallIntensity = 0.75,
-    DirectionalBalance = 0.50,
-    NightBrightness = 0.20,
+-- Game-night indoor: same SetSettings target as day-indoor; mult 1.0; undo day direct crushes.
+local G1R_DIRECT_INDOOR_NIGHT_CLOCK_WRITES = {
+    { name = "Sun Light Intensity", target = 0.90 },
+    { name = "Sun Light Intensity Multiplier in Interiors", target = 1.0 },
+    { name = "Directional Lighting Intensity", target = 3.00 },
+    { name = "Exposure Bias in Interior", target = 0.20 },
+    { name = "Moon Light Intensity Multiplier in Interiors", target = 1.0 },
 }
-local G1R_DIRECT_INDOOR_NIGHT_CLOCK_WRITES = {}
 -- Legacy names (F11 spike / docs).
 local G1R_SETTINGS_NIGHT_PROFILE = G1R_SETTINGS_INDOOR_DAY_PROFILE
 local G1R_DIRECT_NIGHT_WRITES = G1R_DIRECT_INDOOR_DAY_WRITES
@@ -1064,10 +1070,14 @@ local function announceApply(mode, tod, uds)
     ))
 end
 
-local function neutralizeIndoorStacking(uds)
+local function applyIndoorNightParity(uds)
     pcall(function() uds["Apply Interior Adjustments"] = false end)
-    applySettingsProfile(uds, G1R_DAY_RESTORE_PROFILE)
-    for _, entry in ipairs(G1R_DAY_RESTORE_WRITES) do
+    for _, name in ipairs(G1R_SKY_MULTIPLIER_FIELDS) do
+        writeNumericField(uds, name, 1.0)
+    end
+    -- Same SetSettings bundle as day-indoor (visual target); no extra dim via multipliers/direct crush.
+    applySettingsProfile(uds, G1R_SETTINGS_INDOOR_NIGHT_PARITY_PROFILE)
+    for _, entry in ipairs(G1R_DIRECT_INDOOR_NIGHT_CLOCK_WRITES) do
         writeNumericField(uds, entry.name, entry.target)
     end
 end
@@ -1075,11 +1085,7 @@ end
 local function applyIndoorProfile(uds, gameNight)
     if not uds then return false end
     if gameNight then
-        neutralizeIndoorStacking(uds)
-        applySettingsProfile(uds, G1R_SETTINGS_INDOOR_NIGHT_CLOCK_PROFILE)
-        for _, entry in ipairs(G1R_DIRECT_INDOOR_NIGHT_CLOCK_WRITES) do
-            writeNumericField(uds, entry.name, entry.target)
-        end
+        applyIndoorNightParity(uds)
     else
         pcall(function() uds["Apply Interior Adjustments"] = true end)
         for _, name in ipairs(G1R_SKY_MULTIPLIER_FIELDS) do
