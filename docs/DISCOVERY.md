@@ -1,6 +1,36 @@
 # Discovery Protocol — Slice 1
 
-**Status:** Slice 1 complete. **Slice 2a complete (UDS occlusion INACTIVE).** **Slice 2c complete (TOD lever REJECTED).** Next: lever re-discovery via `GothicUltraDynamicSky` / `UltraDynamicSkySettings`; Slice 2b (G1R Inside Detection).
+**Status:** Slice 1 complete. **Slice 2a complete (UDS occlusion INACTIVE).** **Slice 2c complete (TOD REJECTED).** **Slice 2d complete (G1R lever ACCEPTED — v3.1).** Next: Slice 2b (Inside Detection) then Slice 3 (auto apply).
+
+## Slice 2d — G1R Skylight Lever Spike (**COMPLETE — ACCEPTED**)
+
+**Verdict (2026-06-14):** Implementation Lever **confirmed** on G1R path (`SetSettings` + skylight multipliers + direct sun/exposure). Raw UDS `Time of Day` rejected (Slice 2c). HITL accepted **v3.1** profile after v1 (too little) → v2 (pitch black) → v3 → v3.1 tuning.
+
+| Check | Result |
+|-------|--------|
+| Visual night-indoor (daytime Game Clock) | **Yes** — v3.1 accepted |
+| Writes persist | **Yes** |
+| Game Clock unchanged | **Yes** |
+| Frame-fight | Values stick across session; Slice 3 may still need poll/post-tick |
+
+**Accepted target profile (v3.1)** — `Scripts/main.lua` CONFIG:
+
+| Lever | Target |
+|-------|--------|
+| `Dynamic/Target Sky Light Multiplier`, interior skylight mult | **0.40** |
+| `Apply Interior Adjustments` | **true** |
+| `SetSettings.SkyLightIntensity` | **0.37** |
+| `SetSettings.OverallIntensity` | **0.56** |
+| `SetSettings.DirectionalBalance` | **0.38** |
+| `SetSettings.NightBrightness` | **0.48** |
+| `Sun Light Intensity` | **0.28** |
+| `Sun Light Intensity Multiplier in Interiors` | **0.36** |
+| `Directional Lighting Intensity` | **2.40** |
+| `Exposure Bias in Interior` | **-0.50** |
+
+**Day restore:** F12 or relaunch (see `G1R_DAY_RESTORE_*` in CONFIG).
+
+**Slice 3:** Apply this bundle when Inside (gate TBD: Slice 2b or F7 manual); restore outdoor/`G1R_DAY_RESTORE_*` when not Inside.
 
 ## Slice 2c — TOD Lever Write Spike (**COMPLETE — REJECTED**)
 
@@ -48,7 +78,7 @@ Outdoor vs New Camp house (same session): identical diagnostics — `Running=fal
 
 **Pivot plan:** G1R native interior signal (discovery); ship fallback = F7 manual toggle.
 
-**Lever:** ~~Time of Day provisional~~ → **REJECTED** (Slice 2c); re-discovery required.
+**Lever:** **`SetSettings` + G1R skylight multipliers** — **ACCEPTED** (Slice 2d v3.1). ~~Time of Day~~ rejected (Slice 2c).
 
 ---
 
@@ -60,7 +90,7 @@ Outdoor vs New Camp house (same session): identical diagnostics — `Running=fal
 | UDS actor | `...MainMap:PersistentLevel.Ultra_Dynamic_Sky_C_UAID_18C04DDD879FCE6B01_2138010464` |
 | Time of Day property | `Time of Day` (float 0–2400) |
 | Player Occlusion | **`Total Occlusion`** via `Weather_BP` → `Player Occlusion` — path reads; **runtime flat (0) pending Slice 2a** |
-| Provisional lever | **`Time of Day`** (only top-level float with pose 2→3 delta) |
+| Provisional lever | ~~`Time of Day`~~ → **`SetSettings` + multipliers** (Slice 2d accepted) |
 
 ## Readable float comparison
 
@@ -268,7 +298,8 @@ F8 struct/UObject hits on sky actor were **false positives** — wrong object, w
 
 ## After discovery
 
-1. **Slice 2a:** Occlusion Diagnostic — extended F8 (`Running`, profile arrays); outdoor vs indoor pair
-2. **Slice 2b:** (if UDS dead) G1R native interior signal hunt
-3. **Slice 2c:** Provisional TOD write test under working gate or F7 manual
-4. **Slice 3:** Auto blend (`DISCOVERY_MODE = false`); blocked until gate or manual fallback accepted
+1. ~~**Slice 2a:**~~ Occlusion Diagnostic — UDS dead
+2. **Slice 2b:** G1R native Inside Detection (or F7 manual gate for Slice 3)
+3. ~~**Slice 2c:**~~ TOD rejected
+4. ~~**Slice 2d:**~~ G1R lever v3.1 accepted
+5. **Slice 3:** Auto apply accepted profile when Inside; `DISCOVERY_MODE = false`

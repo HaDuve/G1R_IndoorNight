@@ -18,10 +18,52 @@ local SNAPSHOT_KEY      = Key.F8
 -- Slice 2c: one-shot TOD write spike (F9 = G1R quickload; use F10).
 local TOD_SPIKE_ENABLED = true
 local TOD_SPIKE_KEY     = Key.F10
+-- Slice 2d: G1R skylight / SetSettings lever spike (F11).
+local G1R_LEVER_SPIKE_ENABLED = true
+local G1R_LEVER_SPIKE_KEY     = Key.F11
+local G1R_SKY_MULTIPLIER_TARGET = 0.40   -- ACCEPTED v3.1 (Slice 2d HITL)
+-- Accepted indoor target — Slice 3 applies when Inside; F11 spike uses same values.
+local G1R_SETTINGS_NIGHT_PROFILE = {
+    SkyLightIntensity = 0.37,
+    OverallIntensity = 0.56,
+    DirectionalBalance = 0.38,
+    NightBrightness = 0.48,
+}
+local G1R_DIRECT_NIGHT_WRITES = {
+    { name = "Sun Light Intensity", target = 0.28 },
+    { name = "Sun Light Intensity Multiplier in Interiors", target = 0.36 },
+    { name = "Directional Lighting Intensity", target = 2.40 },
+    { name = "Exposure Bias in Interior", target = -0.50 },
+}
+-- F12: restore day baseline after spike (reload also works).
+local G1R_LEVER_RESET_ENABLED = true
+local G1R_LEVER_RESET_KEY     = Key.F12
+local G1R_DAY_RESTORE_PROFILE = {
+    SkyLightIntensity = 1.00,
+    OverallIntensity = 1.00,
+    DirectionalBalance = 1.00,
+    NightBrightness = 0.20,
+}
+local G1R_DAY_RESTORE_WRITES = {
+    { name = "Dynamic Sky Light Multiplier", target = 1.0 },
+    { name = "Target Sky Light Multiplier", target = 1.0 },
+    { name = "Sky Light Intensity Multiplier in Interiors", target = 1.0 },
+    { name = "Sun Light Intensity", target = 0.90 },
+    { name = "Sky Light Intensity", target = 1.00 },
+    { name = "Moon Light Intensity", target = 0.04 },
+    { name = "Overall Intensity", target = 1.00 },
+    { name = "Night Brightness", target = 0.20 },
+    { name = "Directional Balance", target = 1.00 },
+    { name = "Directional Lighting Intensity", target = 3.00 },
+    { name = "Sun Light Intensity Multiplier in Interiors", target = 1.0 },
+    { name = "Moon Light Intensity Multiplier in Interiors", target = 1.0 },
+    { name = "Exposure Bias in Interior", target = 0.20 },
+}
 local MOD_DIR             = "Mods/G1R_IndoorNight/"
 local SNAPSHOT_LOG        = MOD_DIR .. "snapshots.log"
 local SNAPSHOT_SUMMARY    = MOD_DIR .. "snapshots.summary.log"
 local TOD_SPIKE_LOG       = MOD_DIR .. "tod-spike.log"
+local G1R_LEVER_SPIKE_LOG = MOD_DIR .. "g1r-lever-spike.log"
 
 -- UDS class search hints (refined during discovery)
 local UDS_CLASS_NAMES   = {
@@ -140,9 +182,37 @@ local LIGHTING_CANDIDATES = {
     "Moonlight Intensity",
 }
 
+-- G1R sky controller + writable skylight multipliers (object dump Slice 2d).
+local GOTHIC_CONTROLLER_CLASS_NAMES = {
+    "Gothic_Ultra_Dynamic_Controller_C",
+}
+
+local G1R_SKY_MULTIPLIER_FIELDS = {
+    "Dynamic Sky Light Multiplier",
+    "Target Sky Light Multiplier",
+    "Sky Light Intensity Multiplier in Interiors",
+}
+
+local G1R_SKY_BOOL_FIELDS = {
+    "Use Gothic Day Time",
+    "Apply Interior Adjustments",
+}
+
+local UDS_SETTINGS_FIELDS = {
+    "SunAngle",
+    "OverallIntensity",
+    "Contrast",
+    "Saturation",
+    "DirectionalBalance",
+    "NightBrightness",
+    "SkyLightIntensity",
+    "SkyLightTemperature",
+}
+
 -- ---- state -----------------------------------------------------------------
 local modEnabled = ENABLED
 local udsCache = nil
+local gothicControllerCache = nil
 local trueTodCache = nil
 local snapshotCount = 0
 
@@ -242,6 +312,140 @@ local function findUds()
             end
         end
     end
+end
+
+local function findGothicController()
+    if safeObj(gothicControllerCache) then return gothicControllerCache end
+    for _, className in ipairs(GOTHIC_CONTROLLER_CLASS_NAMES) do
+        local ok, obj = pcall(FindFirstOf, className)
+        if ok and safeObj(obj) then
+            gothicControllerCache = obj
+            log("found gothic controller: " .. className)
+            return obj
+        end
+    end
+    for _, className in ipairs(GOTHIC_CONTROLLER_CLASS_NAMES) do
+        local list = FindAllOf(className)
+        if list then
+            for _, obj in pairs(list) do
+                if safeObj(obj) then
+                    gothicControllerCache = obj
+                    log("found gothic controller via FindAllOf: " .. className)
+                    return obj
+                end
+            end
+        end
+    end
+end
+
+local function readSettingsStruct(uds)
+    if not uds then return nil, "no uds" end
+    local settings, err
+    local ok = pcall(function()
+        if uds.GetSettings then
+            settings = uds:GetSettings()
+        elseif uds["GetSettings"] then
+            settings = uds["GetSettings"](uds)
+        end
+    end)
+    if not ok then return nil, "GetSettings threw" end
+    if settings == nil then return nil, "GetSettings nil" end
+    return settings, nil
+end
+
+local function readSettingsFields(settings)
+    local out = {}
+    if settings == nil then return out end
+    for _, name in ipairs(UDS_SETTINGS_FIELDS) do
+        local v, t = readField(settings, name)
+        if t == "number" then
+            out[name] = v
+        end
+    end
+    return out
+end
+
+local function appendSettingsFields(lines, label, settings)
+    lines[#lines + 1] = string.format("  [%s]", label)
+    local fields = readSettingsFields(settings)
+    local any = false
+    for _, name in ipairs(UDS_SETTINGS_FIELDS) do
+        local v = fields[name]
+        if v ~= nil then
+            any = true
+            lines[#lines + 1] = string.format("    %-40s = %.4f", name, v)
+        end
+    end
+    if not any then
+        lines[#lines + 1] = "    (GetSettings unavailable or no numeric fields resolved)"
+    end
+end
+
+local function appendGothicControllerPath(lines, uds)
+    lines[#lines + 1] = "  [gothic controller path (Slice 2d)]"
+    local controller = findGothicController()
+    if not controller then
+        lines[#lines + 1] = "    gothic controller                      = NOT FOUND"
+        return nil
+    end
+    local _, full = actorClassName(controller)
+    lines[#lines + 1] = string.format("    controller object                      = %s", full)
+
+    local skyLink, skyType = readField(controller, "Ultra Dynamic Sky")
+    if isObjectValue(skyLink, skyType) then
+        local _, skyFull = actorClassName(skyLink)
+        lines[#lines + 1] = string.format("    Ultra Dynamic Sky link                 = %s", skyFull)
+        if uds and safeObj(skyLink) and safeObj(uds) then
+            local same = false
+            pcall(function() same = skyLink:GetAddress() == uds:GetAddress() end)
+            lines[#lines + 1] = string.format("    link matches findUds()               = %s", same and "true" or "false")
+        end
+    else
+        lines[#lines + 1] = "    Ultra Dynamic Sky link                 = UNRESOLVED"
+    end
+
+    for _, name in ipairs(G1R_SKY_BOOL_FIELDS) do
+        local v, t = readField(uds, name)
+        if t == "boolean" then
+            lines[#lines + 1] = string.format("    uds %-34s = %s", name, v and "true" or "false")
+        end
+    end
+
+    for _, name in ipairs(G1R_SKY_MULTIPLIER_FIELDS) do
+        local v, t = readField(uds, name)
+        if t == "number" then
+            lines[#lines + 1] = string.format("    uds %-34s = %.4f", name, v)
+        end
+    end
+
+    return controller
+end
+
+local function applySettingsProfile(uds, profile)
+    local settings = readSettingsStruct(uds)
+    if not settings then
+        return false, nil, nil, "GetSettings unavailable"
+    end
+    local before = readSettingsFields(settings)
+    local ok = pcall(function()
+        for key, value in pairs(profile) do
+            settings[key] = value
+        end
+        if uds.SetSettings then
+            uds:SetSettings(settings)
+        else
+            uds["SetSettings"](uds, settings)
+        end
+    end)
+    local afterSettings = readSettingsStruct(uds)
+    local after = afterSettings and readSettingsFields(afterSettings) or {}
+    return ok, before, after, nil
+end
+
+local function writeNumericField(obj, name, value)
+    if not obj or name == nil or value == nil then return false end
+    local ok = pcall(function() obj[name] = value end)
+    return ok
 end
 
 local OCCLUSION_NESTED_CANDIDATES = {
@@ -535,6 +739,136 @@ local function assessReadback(before, target, after)
     return string.format("PARTIAL (readback=%.1f)", after)
 end
 
+local function spikeWriteLine(lines, label, before, target, after, writeOk)
+    lines[#lines + 1] = string.format("    [%s]", label)
+    lines[#lines + 1] = string.format("      before     = %s", before and string.format("%.4f", before) or "UNREADABLE")
+    lines[#lines + 1] = string.format("      write      = %.4f", target)
+    lines[#lines + 1] = string.format("      write ok   = %s", writeOk and "true" or "false")
+    lines[#lines + 1] = string.format("      readback   = %s", after and string.format("%.4f", after) or "UNREADABLE")
+    lines[#lines + 1] = string.format("      assessment = %s", assessReadback(before, target, after))
+end
+
+local function runG1rLeverSpike()
+    local lines = {}
+    lines[#lines + 1] = ""
+    lines[#lines + 1] = "========== G1R_IndoorNight G1R LEVER SPIKE (Slice 2d) =========="
+    lines[#lines + 1] = "  trigger    = F11 one-shot"
+    lines[#lines + 1] = "  protocol   = daytime indoors; F11 then F8 ~2s later for persistence"
+    lines[#lines + 1] = ""
+
+    local uds = findUds()
+    local controller = findGothicController()
+    if not uds then
+        lines[#lines + 1] = "  UDS actor  = NOT FOUND"
+        lines[#lines + 1] = "================================================================"
+        lines[#lines + 1] = ""
+        local text = table.concat(lines, "\n")
+        print(text)
+        appendModLog(text, { G1R_LEVER_SPIKE_LOG, "g1r-lever-spike.log" })
+        return
+    end
+
+    local cls, full = actorClassName(uds)
+    lines[#lines + 1] = "  UDS class  = " .. cls
+    lines[#lines + 1] = "  UDS object = " .. full
+    if controller then
+        local _, ctrlFull = actorClassName(controller)
+        lines[#lines + 1] = "  controller = " .. ctrlFull
+    else
+        lines[#lines + 1] = "  controller = NOT FOUND"
+    end
+    lines[#lines + 1] = ""
+
+    local settingsBefore = readSettingsStruct(uds)
+    if settingsBefore then
+        appendSettingsFields(lines, "GetSettings before", settingsBefore)
+        lines[#lines + 1] = ""
+    else
+        lines[#lines + 1] = "  GetSettings before = UNAVAILABLE"
+        lines[#lines + 1] = ""
+    end
+
+    lines[#lines + 1] = "  [write attempts — multipliers + interior flag]"
+    for _, name in ipairs(G1R_SKY_MULTIPLIER_FIELDS) do
+        local before, t = readField(uds, name)
+        if t == "number" then
+            local target = G1R_SKY_MULTIPLIER_TARGET
+            local writeOk = writeNumericField(uds, name, target)
+            local after = select(1, readField(uds, name))
+            spikeWriteLine(lines, name, before, target, after, writeOk)
+        end
+    end
+
+    local applyBefore, applyType = readField(uds, "Apply Interior Adjustments")
+    if applyType == "boolean" then
+        local writeOk = pcall(function() uds["Apply Interior Adjustments"] = true end)
+        local after = select(1, readField(uds, "Apply Interior Adjustments"))
+        lines[#lines + 1] = "    [Apply Interior Adjustments]"
+        lines[#lines + 1] = string.format("      before     = %s", applyBefore and "true" or "false")
+        lines[#lines + 1] = "      write      = true"
+        lines[#lines + 1] = string.format("      write ok   = %s", writeOk and "true" or "false")
+        lines[#lines + 1] = string.format("      readback   = %s", after == nil and "UNREADABLE" or (after and "true" or "false"))
+    end
+
+    lines[#lines + 1] = ""
+    lines[#lines + 1] = "  [SetSettings night profile]"
+    local setOk, setBefore, setAfter, setErr = applySettingsProfile(uds, G1R_SETTINGS_NIGHT_PROFILE)
+    if setErr then
+        lines[#lines + 1] = "    note       = " .. setErr
+    else
+        for key, target in pairs(G1R_SETTINGS_NIGHT_PROFILE) do
+            spikeWriteLine(lines, "SetSettings." .. key, setBefore[key], target, setAfter[key], setOk)
+        end
+    end
+
+    lines[#lines + 1] = ""
+    lines[#lines + 1] = "  [direct UDS night writes]"
+    for _, entry in ipairs(G1R_DIRECT_NIGHT_WRITES) do
+        local before, t = readField(uds, entry.name)
+        if t == "number" then
+            local writeOk = writeNumericField(uds, entry.name, entry.target)
+            local after = select(1, readField(uds, entry.name))
+            spikeWriteLine(lines, entry.name, before, entry.target, after, writeOk)
+        else
+            lines[#lines + 1] = string.format("    [%s] UNREADABLE (skipped)", entry.name)
+        end
+    end
+
+    lines[#lines + 1] = ""
+    lines[#lines + 1] = "  note       = immediate readback; F8 ~2s later for persistence; tune CONFIG profile if still too bright/off"
+    lines[#lines + 1] = ""
+    lines[#lines + 1] = "  HITL checklist:"
+    lines[#lines + 1] = "    [ ] visual change toward night-indoor?"
+    lines[#lines + 1] = "    [ ] Game Clock / HUD time unchanged?"
+    lines[#lines + 1] = "    [ ] flicker or snap-back within ~2s?"
+    lines[#lines + 1] = "    frame-fight verdict: stable | overwritten | no effect"
+    lines[#lines + 1] = "================================================================"
+    lines[#lines + 1] = ""
+
+    local text = table.concat(lines, "\n")
+    print(text)
+    local written = appendModLog(text, { G1R_LEVER_SPIKE_LOG, "g1r-lever-spike.log" })
+    if written then
+        print(string.format("[G1R_IndoorNight] G1R lever spike logged -> %s", written))
+    else
+        print("[G1R_IndoorNight] G1R lever spike printed above (file write failed; also in UE4SS.log)")
+    end
+end
+
+local function runG1rLeverReset()
+    local uds = findUds()
+    if not uds then
+        print("[G1R_IndoorNight] F12 reset: UDS NOT FOUND")
+        return
+    end
+    pcall(function() uds["Apply Interior Adjustments"] = false end)
+    applySettingsProfile(uds, G1R_DAY_RESTORE_PROFILE)
+    for _, entry in ipairs(G1R_DAY_RESTORE_WRITES) do
+        writeNumericField(uds, entry.name, entry.target)
+    end
+    print("[G1R_IndoorNight] F12 — day baseline restore applied (multipliers/sun/exposure/SetSettings)")
+end
+
 local function runTodSpike()
     local lines = {}
     lines[#lines + 1] = ""
@@ -622,7 +956,7 @@ local function buildDiscoverySnapshot()
     lines[#lines + 1] = ""
     lines[#lines + 1] = "========== G1R_IndoorNight DISCOVERY SNAPSHOT #" .. snapshotCount .. " =========="
     lines[#lines + 1] = "  mode       = read-only (DISCOVERY_MODE=true, zero UDS writes)"
-    lines[#lines + 1] = "  protocol   = Slice 2a: outdoor F8 then indoor F8 (same session); compare Running + floats/arrays"
+    lines[#lines + 1] = "  protocol   = Slice 2d: F8 baseline; F11 G1R lever spike; compare multipliers + GetSettings"
     lines[#lines + 1] = "  paste output into docs/DISCOVERY.md for lever selection"
     lines[#lines + 1] = ""
 
@@ -656,6 +990,13 @@ local function buildDiscoverySnapshot()
 
     appendOcclusionPath(lines, uds)
     lines[#lines + 1] = ""
+    appendGothicControllerPath(lines, uds)
+    local settings = readSettingsStruct(uds)
+    if settings then
+        lines[#lines + 1] = ""
+        appendSettingsFields(lines, "GetSettings (UltraDynamicSkySettings)", settings)
+    end
+    lines[#lines + 1] = ""
     appendCandidateGroup(lines, "legacy sky occlusion candidates", uds, OCCLUSION_CANDIDATES)
     lines[#lines + 1] = ""
     appendCandidateGroup(lines, "time-of-day candidates", uds, TOD_CANDIDATES)
@@ -665,6 +1006,16 @@ local function buildDiscoverySnapshot()
     appendCandidateGroup(lines, "interior adjustment candidates", uds, INTERIOR_CANDIDATES)
     lines[#lines + 1] = ""
     appendCandidateGroup(lines, "lighting-brightness candidates", uds, LIGHTING_CANDIDATES)
+    lines[#lines + 1] = ""
+    appendCandidateGroup(lines, "g1r skylight multiplier candidates", uds, G1R_SKY_MULTIPLIER_FIELDS)
+    lines[#lines + 1] = ""
+    do
+        local names = {}
+        for _, entry in ipairs(G1R_DIRECT_NIGHT_WRITES) do
+            names[#names + 1] = entry.name
+        end
+        appendCandidateGroup(lines, "g1r direct night lever candidates", uds, names)
+    end
     lines[#lines + 1] = "================================================================"
     lines[#lines + 1] = ""
 
@@ -742,7 +1093,11 @@ end
 
 -- ---- bootstrap -------------------------------------------------------------
 if DISCOVERY_MODE then
-    local spikeHint = TOD_SPIKE_ENABLED and "; F10 = TOD write spike (Slice 2c)" or ""
+    local spikeParts = {}
+    if TOD_SPIKE_ENABLED then spikeParts[#spikeParts + 1] = "F10 = TOD spike" end
+    if G1R_LEVER_SPIKE_ENABLED then spikeParts[#spikeParts + 1] = "F11 = G1R lever spike (v3.1)" end
+    if G1R_LEVER_RESET_ENABLED then spikeParts[#spikeParts + 1] = "F12 = restore day baseline" end
+    local spikeHint = #spikeParts > 0 and ("; " .. table.concat(spikeParts, "; ")) or ""
     print("[G1R_IndoorNight] loaded — DISCOVERY MODE (F8 = snapshot" .. spikeHint .. "; output -> snapshots.log + UE4SS.log)")
 else
     print("[G1R_IndoorNight] loaded")
@@ -759,6 +1114,22 @@ if DISCOVERY_MODE then
         RegisterKeyBind(TOD_SPIKE_KEY, function()
             ExecuteInGameThread(function()
                 pcall(runTodSpike)
+            end)
+        end)
+    end
+
+    if G1R_LEVER_SPIKE_ENABLED then
+        RegisterKeyBind(G1R_LEVER_SPIKE_KEY, function()
+            ExecuteInGameThread(function()
+                pcall(runG1rLeverSpike)
+            end)
+        end)
+    end
+
+    if G1R_LEVER_RESET_ENABLED then
+        RegisterKeyBind(G1R_LEVER_RESET_KEY, function()
+            ExecuteInGameThread(function()
+                pcall(runG1rLeverReset)
             end)
         end)
     end

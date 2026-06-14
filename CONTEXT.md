@@ -25,7 +25,7 @@ While the player is **Inside**, the mod blends Sun / Sky Lighting toward **night
 _Avoid_: indoor night override, moonlit night mode
 
 **Night-Level Sky Contribution**:
-The amount of skylight / ambient sky fill UDS applies at nighttime — the reference look the mod targets indoors during daytime. Currently approximated in implementation by UDS time-of-day ~22:00–04:00 (`TARGET_TOD` default `2300`), but the outcome metric is reduced skylight, not sun/moon visibility.
+The amount of skylight / ambient sky fill that reads as acceptable indoors during daytime Game Clock. **Accepted approximation:** G1R `SetSettings` + skylight multiplier bundle (Slice 2d v3.1 in CONFIG), not raw Time of Day.
 _Avoid_: moonlit night, night sky look
 
 **Player Occlusion**:
@@ -40,17 +40,12 @@ _Avoid_: interior, enclosed area
 How the mod decides the player is Inside before blending. Primary candidate: UDS Player Occlusion. If that signal is inactive in G1R, fall back to a G1R native interior signal (discovery pending). Ship fallback: player toggles F7 manually — no automatic gate.
 _Avoid_: occlusion check, indoor trigger
 
-**Provisional Implementation Lever**:
-**Time of Day** on the UDS sky actor — chosen because it was the only readable float that differed between day-indoor and night-indoor reference poses (later found **confounded** with Game Clock). Slice 2c **rejected** it: Lua write sticks momentarily but G1R `GothicUltraDynamicSky` re-syncs from Game Clock and **no visual change** occurs. Not the control surface for Indoor Sky Dimming.
-_Avoid_: temp lever, TOD hack
-
-**Extra Interior Exposure**:
-Player graphics setting (`ExtraInteriorExposure` in `GameUserSettings`) that brightens indoor scenes. Shares the occlusion signal family with Player Occlusion but stacks independently — mod does not override; player balances manually.
-_Avoid_: interior brightness, exposure slider
-
 **Implementation Lever**:
-The UDS property or function the mod writes to achieve Indoor Sky Dimming. **Provisional: Time of Day** — see **Provisional Implementation Lever**. Other candidates (skylight intensity, Interior Adjustments) were not observable in discovery because the UDS interior pipeline may have been inactive.
-_Avoid_: override mechanism, sky hack
+Multi-write bundle on `Ultra_Dynamic_Sky_C` — **`SetSettings`** (`UltraDynamicSkySettings`), **sky light multipliers**, **`Apply Interior Adjustments`**, and direct **sun / directional / exposure** fields. Confirmed Slice 2d (v3.1). Controller: `Gothic_Ultra_Dynamic_Controller_C` syncs sky but lever writes target UDS actor. ~~Time of Day~~ rejected (Slice 2c).
+_Avoid_: override mechanism, sky hack, TOD hack
+
+**Accepted Indoor Profile (v3.1)**:
+HITL-tuned spike values in `G1R_SETTINGS_NIGHT_PROFILE`, `G1R_DIRECT_NIGHT_WRITES`, `G1R_SKY_MULTIPLIER_TARGET` — full table in `docs/DISCOVERY.md` Slice 2d. Outdoor restore: `G1R_DAY_RESTORE_*` / F12.
 
 **Discovery Protocol**:
 Three in-game poses on the same UDS actor: (1) outdoor daytime, occlusion ~0 — baseline; (2) deep indoor daytime (e.g. Old Mine), high occlusion — problem state; (3) same indoor spot at nighttime — reference state. Per pose: dump class name, Player Occlusion, Time of Day, and skylight / Interior Adjustments / lighting-brightness floats. The property delta between poses 2 and 3 selects the Implementation Lever.

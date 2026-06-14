@@ -39,7 +39,9 @@ G1R_IndoorNight/Scripts/main.lua
 
 - **F7** — toggle mod on/off mid-session (instant restore when off)
 - **F8** — discovery snapshot (when `DISCOVERY_MODE = true`; read-only UDS dump to console)
-- **F10** — TOD write spike (when `DISCOVERY_MODE = true` and `TOD_SPIKE_ENABLED = true`; one-shot write to ~2300 + readback log). F9 is G1R quickload — not used by this mod.
+- **F10** — TOD write spike (Slice 2c; rejected). F9 = G1R quickload.
+- **F11** — G1R skylight lever spike (v3 moderate profile)
+- **F12** — restore day baseline after F11 spike
 - On by default at load
 
 ### Discovery mode (Slice 1)
@@ -63,7 +65,12 @@ Edit `Scripts/main.lua` — CONFIG block at top. No rebuild; save and relaunch (
 | `SNAPSHOT_KEY` | `Key.F8` | Print filtered UDS candidate snapshot |
 | `TOD_SPIKE_ENABLED` | `true` | F10 one-shot TOD write test (Slice 2c; discovery mode only) |
 | `TOD_SPIKE_KEY` | `Key.F10` | Key for TOD spike (avoid F9 = G1R quickload) |
+| `G1R_LEVER_SPIKE_ENABLED` | `true` | F11 G1R skylight / SetSettings spike (Slice 2d) |
+| `G1R_LEVER_SPIKE_KEY` | `Key.F11` | Key for G1R lever spike |
+| `G1R_SKY_MULTIPLIER_TARGET` | `0.0` | F11 Dynamic/Target Sky Light Multiplier |
+| `G1R_SETTINGS_NIGHT_PROFILE` | see `main.lua` | F11 `SetSettings` bundle (SkyLightIntensity, OverallIntensity, …) |
+| `G1R_DIRECT_NIGHT_WRITES` | see `main.lua` | F11 direct UDS fields (sun, exposure, interior multipliers) |
 
 ## Status
 
-Slice 1 (discovery mode) implemented — run [Discovery Protocol](./docs/DISCOVERY.md) in-game, then `./tools/verify-install.sh` to confirm load and snapshot capture.
+Slice 2d complete — **G1R lever v3.1 accepted** (F11 spike). Next: Inside Detection (Slice 2b) then auto-apply (Slice 3). See [Discovery Protocol](./docs/DISCOVERY.md).

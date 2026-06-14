@@ -2,4 +2,6 @@
 *.log
 snapshots.log
 snapshots.summary.log
+tod-spike.log
+g1r-lever-spike.log
 Thumbs.db
