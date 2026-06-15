@@ -1,6 +1,40 @@
 # Discovery Protocol — Slice 1
 
-**Status:** **Slice 3 v3.3.12 (HITL accepted).** Tracker issues #1, #4, #5, #6 closed (2026-06-14).
+**Status:** **Slice 6d v3.5.1 (HITL tuning).** Slice 3 v3.3.12 baseline accepted. Tracker issues #1, #4, #5, #6 closed (2026-06-14).
+
+## Slice 6d — HITL transition feel validation (**v3.5.1 — tuning applied**)
+
+**Issue:** [#15](https://github.com/HaDuve/G1R_IndoorNight/issues/15)
+
+**Findings (2026-06-15 HITL):**
+
+| Check | Result | Action |
+|-------|--------|--------|
+| Doorway flicker (<3s) does not trigger dimming | **Pass** | — |
+| Enter stable indoor (~4s fade) | **Pass** | — |
+| Back-out mid-enter (~1s revert) | **Pass** | — |
+| F7 off instant outdoor | **Pass** | — |
+| Game-night indoor swap + torches | **Pass** | — |
+| Exit indoor feels sluggish vs enter | **Adjust** | Asymmetric Gate Stability: **1s** to confirm outdoor when leaving stable indoor; **3s** to re-enter indoor |
+| Day + night indoor still too dark | **Adjust** | All crush targets **×1.10** (+10% brightness) |
+
+**Shipped (v3.5.1-s6d):** `MOD_BUILD = v3.5.1-s6d`; asymmetric gate checkpoints; updated lever targets below.
+
+**Updated targets (Slice 6d ×1.10 on v3.3.12):**
+
+| Lever | Indoor day | Indoor night |
+|-------|------------|--------------|
+| Skylight multipliers | **0.46** | **1.0** |
+| `SetSettings.SkyLightIntensity` | **0.385** | restore **1.0** |
+| `SetSettings.OverallIntensity` | **0.946** | **1.19** |
+| `SetSettings.NightBrightness` | **0.418** | **0.44** |
+| `Sun Light Intensity` | **0.154** | **0.90** |
+| `Sun Light Intensity Mult in Interiors` | **0.11** | **1.0** |
+| `Directional Lighting Intensity` | **0.99** | **3.0** |
+| `Sky Light Intensity Mult in Interiors` | **0.46** (via mult) | **1.32** |
+| `Moon Light Intensity Mult in Interiors` | — | **1.27** |
+
+**Gate Stability (Slice 6d):** Exit stable indoor → outdoor: **1s** checkpoint. Enter outdoor → indoor: **1s / 2s / 3s** checkpoints unchanged.
 
 ## Slice 3 — Auto Apply on `IsUnderRoof` (**v3.3.12 shipped — HITL accepted**)
 
