@@ -16,14 +16,22 @@ local TRANSITION_ENTER_POLLS = math.max(1, math.floor(TRANSITION_ENTER_MS / PASS
 -- Slice 6c: fast revert on gate flip during enter — shorter linear blend back to Last Stable Profile.
 local TRANSITION_REVERT_MS = 1000
 local TRANSITION_REVERT_POLLS = math.max(1, math.floor(TRANSITION_REVERT_MS / PASS_MS))
--- Slice 6a: Gate Stability — checkpoints at 1s / 2s / 3s (poll counts derived from PASS_MS).
-local GATE_STABILITY_CHECKPOINT_SEC = { 1, 2, 3 }
-local GATE_STABILITY_CHECKPOINT_POLLS = {}
-for i, sec in ipairs(GATE_STABILITY_CHECKPOINT_SEC) do
-    GATE_STABILITY_CHECKPOINT_POLLS[i] = math.max(1, math.floor((sec * 1000) / PASS_MS))
+-- Slice 6a/6d: Gate Stability — asymmetric debounce (bias toward outdoor light).
+-- Exit stable indoor → outdoor: 1s. Enter outdoor → indoor: 1s / 2s / 3s.
+local GATE_STABILITY_ENTER_INDOOR_SEC = { 1, 2, 3 }
+local GATE_STABILITY_EXIT_INDOOR_SEC  = { 1 }
+local function buildGateCheckpointPolls(secList)
+    local polls = {}
+    for i, sec in ipairs(secList) do
+        polls[i] = math.max(1, math.floor((sec * 1000) / PASS_MS))
+    end
+    return polls
 end
+local GATE_STABILITY_ENTER_INDOOR_POLLS = buildGateCheckpointPolls(GATE_STABILITY_ENTER_INDOOR_SEC)
+local GATE_STABILITY_EXIT_INDOOR_POLLS  = buildGateCheckpointPolls(GATE_STABILITY_EXIT_INDOOR_SEC)
+local GATE_STABILITY_MAX_RESET_POLLS = GATE_STABILITY_ENTER_INDOOR_POLLS[#GATE_STABILITY_ENTER_INDOOR_POLLS]
 local DEBUG             = false
-local MOD_BUILD         = "v3.5.0-s6c"  -- boot banner — confirm this string in UE4SS.log after reload
+local MOD_BUILD         = "v3.5.1-s6d"  -- boot banner — confirm this string in UE4SS.log after reload
 local INGAME_WARMUP_POLLS = 30      -- ~3s after ClientRestart before sky writes
 local INDOOR_NIGHT_REFRESH_POLLS = 20  -- re-apply game-night profile ~2s (frame-fight)
 local INDOOR_NIGHT_PROBE_POLLS = 5       -- passive readback ~500ms (detect G1R revert)
@@ -38,12 +46,13 @@ local TOD_SPIKE_KEY     = Key.F10
 local G1R_LEVER_SPIKE_ENABLED = true
 local G1R_LEVER_SPIKE_KEY     = Key.F11
 -- v3.3.12 HITL accepted: dark-cave indoor feel; cool skylight hue night only.
+-- Slice 6d HITL: +10% brightness on day/night indoor crush targets (×1.10).
 local INDOOR_DARKEN_VS_V31      = 0.80
 local GAME_NIGHT_TOD_START      = 2000   -- UDS 0–2400 (~20:00)
 local GAME_NIGHT_TOD_END          = 600    -- ~06:00
-local G1R_SKY_MULTIPLIER_TARGET   = 0.42   -- v3.3.12 day-indoor skylight crush
-local G1R_NIGHT_INTERIOR_SKYLIGHT_MULT = 1.20
-local G1R_NIGHT_INTERIOR_MOON_MULT     = 1.15
+local G1R_SKY_MULTIPLIER_TARGET   = 0.46   -- v3.3.12 0.42 × 1.10 (Slice 6d)
+local G1R_NIGHT_INTERIOR_SKYLIGHT_MULT = 1.32  -- v3.3.12 1.20 × 1.10
+local G1R_NIGHT_INTERIOR_MOON_MULT     = 1.27  -- v3.3.12 1.15 × 1.10
 local G1R_INDOOR_SKYLIGHT_TEMP    = -0.60  -- SetSettings: cool / blue-ish (night only)
 local G1R_INDOOR_SATURATION       = 0.92
 local G1R_INDOOR_SKYLIGHT_COLOR   = { R = 0.62, G = 0.76, B = 1.00, A = 1.00 }
@@ -51,27 +60,27 @@ local G1R_INDOOR_SKYLIGHT_COLOR   = { R = 0.62, G = 0.76, B = 1.00, A = 1.00 }
 local G1R_SETTINGS_INDOOR_NIGHT_SKYLIGHT_HUE = {
     SkyLightTemperature = G1R_INDOOR_SKYLIGHT_TEMP,
     Saturation = G1R_INDOOR_SATURATION,
-    NightBrightness = 0.40,
-    OverallIntensity = 1.08,
+    NightBrightness = 0.44,       -- v3.3.12 0.40 × 1.10 (Slice 6d)
+    OverallIntensity = 1.19,      -- v3.3.12 1.08 × 1.10 (Slice 6d)
 }
 local G1R_SETTINGS_INDOOR_DAY_PROFILE = {
-    SkyLightIntensity = 0.35,   -- v3.3.9 0.29 × 1.20 (+20% brightness)
-    OverallIntensity = 0.86,    -- v3.3.9 0.72 × 1.20 (+20% brightness)
+    SkyLightIntensity = 0.385,    -- v3.3.12 0.35 × 1.10 (Slice 6d)
+    OverallIntensity = 0.946,     -- v3.3.12 0.86 × 1.10 (Slice 6d)
     DirectionalBalance = 0.08,
-    NightBrightness = 0.38,
+    NightBrightness = 0.418,      -- v3.3.12 0.38 × 1.10 (Slice 6d)
     SunAngle = 100.0,             -- zenith; top-down bias via SetSettings (not sun crush)
 }
 local G1R_SETTINGS_INDOOR_NIGHT_PARITY_PROFILE = {
-    SkyLightIntensity = 0.21,
-    OverallIntensity = 0.45,
+    SkyLightIntensity = 0.231,    -- v3.3.12 0.21 × 1.10 (Slice 6d; spike/diagnostic parity)
+    OverallIntensity = 0.495,     -- v3.3.12 0.45 × 1.10 (Slice 6d)
     DirectionalBalance = 0.08,
-    NightBrightness = 0.20,
+    NightBrightness = 0.22,       -- v3.3.12 0.20 × 1.10 (Slice 6d)
     SunAngle = 100.0,
 }
 local G1R_DIRECT_INDOOR_DAY_WRITES = {
-    { name = "Sun Light Intensity", target = 0.14 },              -- v3.3.8: restore v3.3.6 (0.08 was pitch black)
-    { name = "Sun Light Intensity Multiplier in Interiors", target = 0.10 },
-    { name = "Directional Lighting Intensity", target = 0.90 },
+    { name = "Sun Light Intensity", target = 0.154 },             -- v3.3.12 0.14 × 1.10 (Slice 6d)
+    { name = "Sun Light Intensity Multiplier in Interiors", target = 0.11 },
+    { name = "Directional Lighting Intensity", target = 0.99 },
     -- Exposure Bias in Interior: not written — respect G1R Extra Interior Exposure slider.
 }
 -- Game-night indoor: clear day crush; brighten via skylight/moon (not exposure).
@@ -301,6 +310,7 @@ local lastStableMode = nil    -- Last Stable Profile mode for revert target
 local lastStableLeverSnapshot = nil
 local gateStabilityPhase = nil  -- nil | "pending" | "confirmed" | "armed"
 local gatePendingUnderRoof = nil
+local gatePendingCheckpointPolls = nil
 local gatePendingPolls = 0
 local gateCheckpointIndex = 0
 local gateUnavailablePolls = 0
@@ -1774,9 +1784,17 @@ end
 local function resetGateStability()
     gateStabilityPhase = nil
     gatePendingUnderRoof = nil
+    gatePendingCheckpointPolls = nil
     gatePendingPolls = 0
     gateCheckpointIndex = 0
     gateUnavailablePolls = 0
+end
+
+local function gateUnavailableResetPolls()
+    if gateStabilityPhase == "pending" and gatePendingCheckpointPolls then
+        return gatePendingCheckpointPolls[#gatePendingCheckpointPolls]
+    end
+    return GATE_STABILITY_MAX_RESET_POLLS
 end
 
 local function logGateStability(fromPhase, toPhase, detail)
@@ -1793,7 +1811,16 @@ local function startGatePending(underRoof)
     gatePendingUnderRoof = underRoof
     gatePendingPolls = 0
     gateCheckpointIndex = 0
-    logGateStability("idle", "pending", underRoof and "target=inside" or "target=outside")
+    -- Bias toward light: leaving stable indoor confirms outdoor in 1s; entering indoor keeps 3s.
+    gatePendingCheckpointPolls = lastStableUnderRoof
+        and GATE_STABILITY_EXIT_INDOOR_POLLS
+        or GATE_STABILITY_ENTER_INDOOR_POLLS
+    local confirmSec = (gatePendingCheckpointPolls[#gatePendingCheckpointPolls] * PASS_MS) / 1000
+    logGateStability(
+        "idle",
+        "pending",
+        string.format("target=%s confirm=%.0fs", underRoof and "inside" or "outside", confirmSec)
+    )
 end
 
 local function applyLastStableProfile(uds, tod)
@@ -1921,17 +1948,18 @@ local function tickGateStability(uds, underRoof, tod, gameNight)
 
     gatePendingPolls = gatePendingPolls + 1
 
+    local checkpoints = gatePendingCheckpointPolls or GATE_STABILITY_ENTER_INDOOR_POLLS
     local nextIdx = gateCheckpointIndex + 1
-    local cpPoll = GATE_STABILITY_CHECKPOINT_POLLS[nextIdx]
+    local cpPoll = checkpoints[nextIdx]
     if not cpPoll or gatePendingPolls < cpPoll then return end
 
     gateCheckpointIndex = nextIdx
     local cpSec = (cpPoll * PASS_MS) / 1000
     logGateStability("pending", "pending", string.format("checkpoint %.0fs OK", cpSec))
 
-    if nextIdx < #GATE_STABILITY_CHECKPOINT_POLLS then return end
+    if nextIdx < #checkpoints then return end
 
-    logGateStability("pending", "confirmed", "3s stable")
+    logGateStability("pending", "confirmed", string.format("%.0fs stable", cpSec))
     gateStabilityPhase = "confirmed"
     logGateStability("confirmed", "armed", gatePendingUnderRoof and "enter inside" or "enter outside")
     gateStabilityPhase = "armed"
@@ -1966,7 +1994,7 @@ local function pass()
     local underRoof = tryIsUnderRoof(pawn)
     local tod = readTimeOfDay(uds)
     local gameNight = isGameNight(tod)
-    local gateUnavailableResetAfter = GATE_STABILITY_CHECKPOINT_POLLS[#GATE_STABILITY_CHECKPOINT_POLLS]
+    local gateUnavailableResetAfter = gateUnavailableResetPolls()
 
     if skyTransitionActive then
         local tickUnderRoof = skyTransitionPhase == "revert" and lastStableUnderRoof
@@ -2032,7 +2060,11 @@ local function pass()
     end
 
     if gateStabilityPhase == "pending" then
-        logGateStability("pending", "idle", "returned to stable outdoor — reset")
+        logGateStability(
+            "pending",
+            "idle",
+            string.format("returned to stable %s — reset", lastStableUnderRoof and "inside" or "outside")
+        )
         resetGateStability()
     end
 
