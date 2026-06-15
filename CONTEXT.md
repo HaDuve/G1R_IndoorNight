@@ -41,7 +41,7 @@ The sky lever bundle last fully applied and confirmed — outdoor baseline (`G1R
 _Avoid_: previous state, rollback target
 
 **Lever Boundaries**:
-Hard rules for what Slice 3 may write. Source of truth: `Scripts/main.lua` CONFIG + apply functions (`applyIndoorProfile`, `applyNightIndoorClear`, `applyDayRestore`). **v3.3.12 (HITL accepted).**
+Hard rules for what Slice 3 may write. Source of truth: `Scripts/main.lua` CONFIG + apply functions (`applyIndoorProfile`, `applyNightIndoorClear`, `applyDayRestore`). **v3.5.1 / Slice 6d (HITL accepted).**
 
 | Category | Field / lever | Indoor day | Indoor night | Outdoor leave / F7 off / F12 |
 |----------|---------------|------------|--------------|------------------------------|
@@ -58,10 +58,10 @@ Hard rules for what Slice 3 may write. Source of truth: `Scripts/main.lua` CONFI
 | **Multipliers** | `Dynamic/Target Sky Light Multiplier`, interior skylight mult | **0.46** | **1.0** (clear crush) | **1.0** |
 | **Flag** | `Apply Interior Adjustments` | **true** | **false** | **false** |
 | **Direct UDS** | Sun / directional crush fields | write | restore values (not exposure) | restore |
-| **Direct UDS** | `Sky Light Intensity Mult in Interiors` | via multipliers | **1.20** | restore |
-| **Direct UDS** | `Moon Light Intensity Mult in Interiors` | — | **1.15** | restore |
+| **Direct UDS** | `Sky Light Intensity Mult in Interiors` | via multipliers | **1.32** | restore |
+| **Direct UDS** | `Moon Light Intensity Mult in Interiors` | — | **1.27** | restore |
 
-**Accepted Indoor Profile (v3.3.12)**:
+**Accepted Indoor Profile (v3.5.1 / Slice 6d)**:
 HITL-accepted values in `Scripts/main.lua` CONFIG — day: `G1R_SETTINGS_INDOOR_DAY_PROFILE` + `G1R_DIRECT_INDOOR_DAY_WRITES` + skylight mult **0.46** (Slice 6d +10%; no day hue); night: `applyNightIndoorClear` + `G1R_NIGHT_INDOOR_BRIGHTNESS_WRITES` + `G1R_SETTINGS_INDOOR_NIGHT_SKYLIGHT_HUE`. Outdoor restore: `G1R_DAY_RESTORE_*` / F12.
 
 **Implementation Lever**:
@@ -69,7 +69,7 @@ Multi-write bundle on `Ultra_Dynamic_Sky_C` — **`SetSettings`** (`UltraDynamic
 _Avoid_: override mechanism, sky hack, TOD hack
 
 **Accepted Indoor Profile (v3.1)**:
-Superseded for ship by **Accepted Indoor Profile (v3.3.12)**. Retained in `docs/DISCOVERY.md` Slice 2d as spike reference only.
+Superseded for ship by **Accepted Indoor Profile (v3.5.1 / Slice 6d)**. Retained in `docs/DISCOVERY.md` Slice 2d as spike reference only.
 
 **Night-Level Sky Contribution**:
 The amount of skylight / ambient sky fill that reads as acceptable indoors during daytime Game Clock. **Accepted approximation:** G1R `SetSettings` + skylight multiplier bundle (Slice 2d v3.1 in CONFIG), not raw Time of Day.

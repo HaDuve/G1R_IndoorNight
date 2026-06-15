@@ -36,6 +36,10 @@
 
 **Gate Stability (Slice 6d):** Exit stable indoor → outdoor: **1s** checkpoint. Enter outdoor → indoor: **1s / 2s / 3s** checkpoints unchanged.
 
+**Transition timing (Slice 6d):** `TRANSITION_ENTER_MS` (4000) and `TRANSITION_REVERT_MS` (1000) unchanged — HITL pass on enter/revert feel; only Gate Stability asymmetry and crush targets tuned.
+
+**Post-tuning re-HITL (recommended before close):** Re-check doorway threshold with **1s exit** path — main regression surface after asymmetric gate change.
+
 ## Slice 3 — Auto Apply on `IsUnderRoof` (**v3.3.12 shipped — HITL accepted**)
 
 **Shipped:** `DISCOVERY_MODE = false`; poll `IsUnderRoof` every 100 ms; modes `indoor_day` / `indoor_night` / `outdoor`; F7 toggle + day restore.

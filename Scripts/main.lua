@@ -71,10 +71,10 @@ local G1R_SETTINGS_INDOOR_DAY_PROFILE = {
     SunAngle = 100.0,             -- zenith; top-down bias via SetSettings (not sun crush)
 }
 local G1R_SETTINGS_INDOOR_NIGHT_PARITY_PROFILE = {
-    SkyLightIntensity = 0.21,
-    OverallIntensity = 0.45,
+    SkyLightIntensity = 0.231,    -- v3.3.12 0.21 × 1.10 (Slice 6d; spike/diagnostic parity)
+    OverallIntensity = 0.495,     -- v3.3.12 0.45 × 1.10 (Slice 6d)
     DirectionalBalance = 0.08,
-    NightBrightness = 0.20,
+    NightBrightness = 0.22,       -- v3.3.12 0.20 × 1.10 (Slice 6d)
     SunAngle = 100.0,
 }
 local G1R_DIRECT_INDOOR_DAY_WRITES = {
