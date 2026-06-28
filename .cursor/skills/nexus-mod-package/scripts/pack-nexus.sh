@@ -63,9 +63,7 @@ case "$MODE" in
     copy_lua "$SCR_DST"
     cd "$UPLOADS"
     zip -r G1R_IndoorNight_NexusPack.zip G1R_IndoorNight_NexusPack
-    cp G1R_IndoorNight_NexusPack.zip "IndoorNight Performance.zip"
     echo "Wrote: $UPLOADS/G1R_IndoorNight_NexusPack.zip"
-    echo "Mirror: $UPLOADS/IndoorNight Performance.zip"
     echo "Next: update $PACK/00_README_INSTALLATION.txt if needed, then re-zip README-only if changed."
     ;;
   scripts-only)

@@ -9,8 +9,7 @@ Internal checklist for Nexus / download releases. Staging lives **outside** the 
 | Path | Purpose |
 |------|---------|
 | `~/Downloads/ModUploads/G1R_IndoorNight_NexusPack/` | Unpacked full release (edit here, then zip) |
-| `~/Downloads/ModUploads/G1R_IndoorNight_NexusPack.zip` | Primary upload zip |
-| `~/Downloads/ModUploads/IndoorNight Performance.zip` | Same bytes as NexusPack zip (mirror name) |
+| `~/Downloads/ModUploads/G1R_IndoorNight_NexusPack.zip` | Full release upload zip |
 | `~/Downloads/ModUploads/G1R_IndoorNight.zip` | Scripts-only zip (optional separate upload) |
 
 Do not commit zips or `ModUploads/` to git.
@@ -106,7 +105,6 @@ cp "$REPO/Scripts/main.lua" "$REPO/Scripts/config.lua" \
 
 cd ~/Downloads/ModUploads
 zip -r G1R_IndoorNight_NexusPack.zip G1R_IndoorNight_NexusPack
-cp G1R_IndoorNight_NexusPack.zip "IndoorNight Performance.zip"
 ```
 
 If `Scalability.ini` in staging is read-only from a prior install test: `chmod u+w` before overwrite, or skip when unchanged.

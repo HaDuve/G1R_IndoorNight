@@ -23,7 +23,7 @@ description: Package G1R_IndoorNight for Nexus/download release — stage Lua mo
 
 | Type | Flag | Default zip |
 |------|------|-------------|
-| Full (Lua + MaxPerf config) | `--full` | `G1R_IndoorNight_NexusPack.zip` + mirror `IndoorNight Performance.zip` |
+| Full (Lua + MaxPerf config) | `--full` | `G1R_IndoorNight_NexusPack.zip` |
 | Scripts only | `--scripts-only` | `G1R_IndoorNight.zip` |
 | Config only | `--config-only` | `G1R_IndoorNight_MaxPerf_v<N>.zip` |
 
