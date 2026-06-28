@@ -19,7 +19,7 @@ usage() {
   echo ""
   echo "  maxperf                        — no grass/shadows/Lumen + CrossOver UET subset (v13); default fallback"
   echo "  default-lighting               — perf tweaks; Lumen + shadows stay on"
-  echo "  streaming-only                 — Epic quality; streaming Engine only (NOT for CrossOver — see TEST.md)"
+  echo "  streaming-only                 — Epic quality; streaming Engine only (NOT for CrossOver)"
   echo "  streaming-crossover            — streaming Engine + low maxperf settings (CrossOver A/B test)"
   echo "  streaming-veryhigh             — streaming + shadows on, GI off, high textures (M1 Max+ opt-in)"
   echo "  streaming-veryhigh-extshadows  — veryhigh + DistanceScale 1.25; pair with mod SHADOWS_ON_PROFILE"

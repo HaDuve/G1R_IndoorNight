@@ -50,7 +50,7 @@ Edit `Scripts/main.lua` — CONFIG block at top. No rebuild; save and relaunch (
 
 ### Engine profiles (CrossOver / max-perf)
 
-Optional `Engine.ini` + `GameUserSettings.ini` profile pack with switcher: [Config/ProfilePack/](Config/ProfilePack/). Profiles: `maxperf` (default fallback, v13 includes CrossOver UET subset), `streaming-veryhigh` (M1 Max+ opt-in), `streaming-veryhigh-extshadows` (extended CSM + mod `SHADOWS_ON_PROFILE` for caves), `streaming-crossover` (CrossOver A/B), `streaming-only` (native GPU quality test — not for CrossOver). See [Config/ProfilePack/TEST.md](Config/ProfilePack/TEST.md).
+Optional `Engine.ini` + `GameUserSettings.ini` profile pack with switcher: [Config/ProfilePack/](Config/ProfilePack/). Profiles: `maxperf` (default fallback, v13 includes CrossOver UET subset), `streaming-veryhigh` (M1 Max+ opt-in), `streaming-veryhigh-extshadows` (extended CSM + mod `SHADOWS_ON_PROFILE` for caves), `streaming-crossover` (CrossOver A/B), `streaming-only` (native GPU quality test — not for CrossOver).
 
 | Setting | Default | Meaning |
 |---------|---------|---------|

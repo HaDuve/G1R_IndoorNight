@@ -82,7 +82,7 @@ STREAMING-ONLY PROFILE
 
 **CrossOver warning:** `streaming-only` enables Epic Lumen + shadows. Tested 2026-06-16: under 20 FPS on CrossOver. Do not use for daily play on Mac.
 
-For CrossOver quality vs maxperf, try `streaming-veryhigh` (shadows on, GI off) or `streaming-crossover` for A/B testing. See TEST.md.
+For CrossOver quality vs maxperf, try `streaming-veryhigh` (shadows on, GI off) or `streaming-crossover` for A/B testing.
 
 
 NOTES

@@ -2,7 +2,7 @@
 ; Gothic 1 Remake - CrossOver / macOS Engine Tweaks
 ; Profile: STREAMING VERY HIGH — streaming + async + grass off; shadows via GameUserSettings
 ; Switch: switch-g1r-profile.sh streaming-veryhigh
-; Reference: M1 Max + CrossOver 27 + GPT 4 Beta 1 (~30 fps native; DLSS Quality + FG ~60 — see TEST.md)
+; Reference: M1 Max + CrossOver 27 + GPT 4 Beta 1 (~30 fps native; DLSS Quality + FG ~60)
 ;===========================================================
 
 [/Script/Engine.RendererSettings]
