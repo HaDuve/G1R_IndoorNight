@@ -17,7 +17,7 @@ PROFILES=(maxperf default-lighting streaming-only streaming-crossover streaming-
 usage() {
   echo "Usage: $(basename "$0") {maxperf|default-lighting|streaming-only|streaming-crossover|streaming-veryhigh|streaming-veryhigh-extshadows|backup|list} [--no-backup]"
   echo ""
-  echo "  maxperf                        — no grass/shadows/Lumen, low scalability (v12); default fallback"
+  echo "  maxperf                        — no grass/shadows/Lumen + CrossOver UET subset (v13); default fallback"
   echo "  default-lighting               — perf tweaks; Lumen + shadows stay on"
   echo "  streaming-only                 — Epic quality; streaming Engine only (NOT for CrossOver — see TEST.md)"
   echo "  streaming-crossover            — streaming Engine + low maxperf settings (CrossOver A/B test)"
@@ -130,6 +130,10 @@ case "$PROFILE" in
     ;;
   list)
     do_list
+    ;;
+  maxperf-metaltune)
+    echo "Note: maxperf-metaltune merged into maxperf (v13); switching maxperf."
+    switch_profile maxperf
     ;;
   maxperf|default-lighting|streaming-only|streaming-crossover|streaming-veryhigh|streaming-veryhigh-extshadows)
     switch_profile "$PROFILE"

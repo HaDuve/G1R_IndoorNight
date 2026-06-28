@@ -1,11 +1,11 @@
 G1R — CrossOver / macOS Config: Profile Pack (profiles + switcher)
-Version: 1.2.0
+Version: 1.3.0
 
 WHAT THIS PACK CONTAINS
 
 Engine/user-settings profiles plus a switch script:
 
-  maxperf             — no grass/shadows/Lumen; max FPS; darker exposure (default fallback)
+  maxperf             — no grass/shadows/Lumen + CrossOver UET subset (v13); default fallback
   default-lighting    — perf tweaks; Lumen + shadows stay on; darker caves
   streaming-only      — Epic Lumen/shadows/textures ON; Engine streaming only (NOT for CrossOver)
   streaming-crossover — streaming Engine + low maxperf settings (CrossOver A/B vs maxperf)

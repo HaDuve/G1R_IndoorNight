@@ -55,11 +55,12 @@ local TARGET_TOD        = 2300.0    -- UDS 0–2400; ~23:00 moonlit night
 local OCCLUSION_START   = 0.5       -- below: no blend
 local OCCLUSION_FULL    = 1.0       -- at/above: full TARGET_TOD blend
 local DEBUG             = false
-local MOD_BUILD         = "v3.6.1-configlua"  -- boot banner — confirm this string in UE4SS.log after reload
+local MOD_BUILD         = "v3.6.2-outdoorpoll"  -- boot banner — confirm this string in UE4SS.log after reload
 local INGAME_WARMUP_POLLS = 50      -- ~5s after ClientRestart before any sky probe
 local STABLE_READY_POLLS  = 15      -- ~1.5s consecutive ready polls before first sky write
 local INDOOR_NIGHT_REFRESH_POLLS = 20  -- re-apply game-night profile ~2s (frame-fight)
 local INDOOR_NIGHT_PROBE_POLLS = 5       -- passive readback ~500ms (detect G1R revert)
+local OUTDOOR_STABLE_POLL_INTERVAL = 5   -- when stably outside: IsUnderRoof check every ~500ms (less UE4SS churn)
 
 -- Discovery mode (Slice 1): read-only UDS instrumentation; no sky writes.
 local DISCOVERY_MODE    = false
@@ -316,6 +317,7 @@ local skyTransitionTargetMode = nil
 local skyTransitionTargetUnderRoof = nil
 local skyTransitionGameNight = nil
 local skyTransitionSkipExposure = false
+local outdoorStableSkipPolls = 0
 
 -- ---- helpers ---------------------------------------------------------------
 local function log(msg)
@@ -2076,6 +2078,16 @@ local function pass()
     if stableReadyPolls < STABLE_READY_POLLS then return end
     if rapidRestartWarmup == 1 then rapidRestartWarmup = 0 end
     udsNotReadyLogged = false
+
+    if not skyTransitionActive and gateStabilityPhase == nil and lastStableUnderRoof == false then
+        outdoorStableSkipPolls = outdoorStableSkipPolls + 1
+        if outdoorStableSkipPolls < OUTDOOR_STABLE_POLL_INTERVAL then
+            return
+        end
+        outdoorStableSkipPolls = 0
+    else
+        outdoorStableSkipPolls = 0
+    end
 
     notePawnReload(pawn)
 

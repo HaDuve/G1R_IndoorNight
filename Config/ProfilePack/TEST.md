@@ -1,5 +1,31 @@
 # Profile pack — test notes
 
+## Diagnosis: camp stutter + Jun 28 crash (2026-06-28)
+
+**Active config at crash:** `maxperf` Engine.ini, all `sg.*=0`, DLSS upscaling + frame gen, M1 Pro / 16 GB / CrossOver.
+
+**Crash** (`UECC-Windows-262FF563...`, ~1h54m session):
+
+| Field | Value |
+|-------|--------|
+| Type | Assert — `Abort signal received` |
+| OOM | No (`bIsOOM=0`; ~1.2 GB RAM free) |
+| Location | **Old Camp** gate fight vs Bloodwyn (combat tags; hundreds of `fP_OC_*` actors) |
+| Stack | **GameThread → UE4SS → G1R** (Lua `ExecuteInGameThread` path, not a bare GPU fault) |
+
+**Stutter hypotheses (ranked):**
+
+1. **Thunderstorm + camp density** — Niagara/UDS weather + many NPCs (Engine lane; not fixed by Indoor Night mod).
+2. **Ultimate Engine Tweaks wholesale** — ~400 CVARs tuned for native DX12; **DirectStorage, VRS, mass parallel RHI** hurt or noop on D3DMetal. Use curated subset only.
+3. **Live Engine.ini drift** — bottle had `ShaderPipelineCache.StartupMode=0` + `LazyLoadShadersWhenPSOCacheIsPresent=1` vs repo `maxperf` (`StartupMode=2`, lazy off). Re-switch profile to reset.
+4. **UE4SS mod poll** — 100 ms outdoor polls + 4 s sky-transition writes indoors; v3.6.2 throttles stable-outdoor polls to ~500 ms.
+
+**Shipped (v13):** metaltune tweaks merged into default `maxperf` (FX cap, volumetric fog, WP streaming caps, GC, predictive streaming, rain droplets off).
+
+**A/B checklist:** Old Camp gate / New Camp market / thunderstorm fight — note FPS + hitch count. Test one session with **F7** (mod off) to isolate UE4SS crash risk.
+
+---
+
 ## streaming-veryhigh (M1 Max user report, 2026-06)
 
 **Source:** Community feedback — texture streaming + async loading only (no Lumen/shadow kills) improves FPS without visible quality loss on capable Macs.
