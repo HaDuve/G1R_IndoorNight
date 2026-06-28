@@ -1,0 +1,162 @@
+# Mod upload packaging
+
+Internal checklist for Nexus / download releases. Staging lives **outside** the repo; this doc is the source of truth for what goes in each pack.
+
+**Agent skill:** [.cursor/skills/nexus-mod-package/SKILL.md](.cursor/skills/nexus-mod-package/SKILL.md) — run `.cursor/skills/nexus-mod-package/scripts/pack-nexus.sh` to stage and zip.
+
+## Staging (local only)
+
+| Path | Purpose |
+|------|---------|
+| `~/Downloads/ModUploads/G1R_IndoorNight_NexusPack/` | Unpacked full release (edit here, then zip) |
+| `~/Downloads/ModUploads/G1R_IndoorNight_NexusPack.zip` | Primary upload zip |
+| `~/Downloads/ModUploads/IndoorNight Performance.zip` | Same bytes as NexusPack zip (mirror name) |
+| `~/Downloads/ModUploads/G1R_IndoorNight.zip` | Scripts-only zip (optional separate upload) |
+
+Do not commit zips or `ModUploads/` to git.
+
+## Pack types
+
+### Full Nexus pack (default)
+
+Ship **Lua mod + MaxPerf config** together — matches what players expect from the last release.
+
+```
+G1R_IndoorNight_NexusPack/
+  00_README_INSTALLATION.txt
+  Config_MaxPerf/Local/G1R/Saved/Config/Windows/
+    Engine.ini
+    GameUserSettings.ini
+    Scalability.ini
+  G1R_IndoorNight/Scripts/
+    main.lua
+    config.lua
+    indoornight_brightness.lua
+    indoornight_reload.lua
+```
+
+### Scripts-only (`G1R_IndoorNight.zip`)
+
+Same four Lua files under `G1R_IndoorNight/Scripts/`. No config, no README required unless Nexus page asks for it.
+
+### Config-only update
+
+Rare — only when bumping MaxPerf without a Lua release. Same `Config_MaxPerf/` tree; no `G1R_IndoorNight/`. Name clearly (e.g. `G1R_IndoorNight_MaxPerf_v13.zip`).
+
+## Repo → pack mapping
+
+| Pack path | Copy from repo |
+|-----------|----------------|
+| `Config_MaxPerf/.../Engine.ini` | `Config/ProfilePack/.../Engine.ini.maxperf` |
+| `Config_MaxPerf/.../GameUserSettings.ini` | `Config/ProfilePack/.../GameUserSettings.ini.maxperf` |
+| `Config_MaxPerf/.../Scalability.ini` | `Config/ProfilePack/.../Scalability.ini` |
+| `G1R_IndoorNight/Scripts/*.lua` | `Scripts/*.lua` (see include list) |
+
+Active filenames in the pack (`Engine.ini`, not `Engine.ini.maxperf`) — players copy straight into `Config/Windows`.
+
+## Include / exclude
+
+**Include (Lua):**
+
+- `main.lua`
+- `config.lua`
+- `indoornight_brightness.lua`
+- `indoornight_reload.lua`
+
+**Exclude from all upload zips:**
+
+- `Scripts/check-night-feedback.sh` — dev HITL only
+- `install.sh`, `tools/`, `docs/`, `HANDOFF.md`, `CONTEXT.md`
+- Profile switcher + variant inis (`switch-g1r-profile.sh`, `Engine.ini.streaming-*`, etc.) — full profile pack is separate (`Config/ProfilePack/`), not the Nexus MaxPerf bundle
+- `.git`, logs, snapshots
+
+## Versions to keep in sync
+
+Before zipping, align these:
+
+| What | Where |
+|------|--------|
+| Mod build string | `Scripts/main.lua` → `MOD_BUILD` (verify in UE4SS.log after load) |
+| README header | `00_README_INSTALLATION.txt` in staging folder |
+| Nexus changelog | Human copy-paste (see below) |
+| MaxPerf engine generation | Header in `Engine.ini.maxperf` (e.g. v13) |
+
+**Current shipped (update when you release):**
+
+- Mod: `v3.6.2-outdoorpoll`
+- MaxPerf config: Engine.ini **v13**
+- Last full pack: Jun 2026 → `G1R_IndoorNight_NexusPack.zip`
+
+## Package steps
+
+```bash
+PACK=~/Downloads/ModUploads/G1R_IndoorNight_NexusPack
+REPO="$HOME/Library/Application Support/CrossOver/G1R_IndoorNight"
+CFG="$PACK/Config_MaxPerf/Local/G1R/Saved/Config/Windows"
+SCR="$PACK/G1R_IndoorNight/Scripts"
+
+mkdir -p "$CFG" "$SCR"
+cp "$REPO/Config/ProfilePack/Local/G1R/Saved/Config/Windows/Engine.ini.maxperf" "$CFG/Engine.ini"
+cp "$REPO/Config/ProfilePack/Local/G1R/Saved/Config/Windows/GameUserSettings.ini.maxperf" "$CFG/GameUserSettings.ini"
+cp "$REPO/Config/ProfilePack/Local/G1R/Saved/Config/Windows/Scalability.ini" "$CFG/Scalability.ini"
+cp "$REPO/Scripts/main.lua" "$REPO/Scripts/config.lua" \
+   "$REPO/Scripts/indoornight_brightness.lua" "$REPO/Scripts/indoornight_reload.lua" "$SCR/"
+
+# Edit $PACK/00_README_INSTALLATION.txt (version + verify string)
+
+cd ~/Downloads/ModUploads
+zip -r G1R_IndoorNight_NexusPack.zip G1R_IndoorNight_NexusPack
+cp G1R_IndoorNight_NexusPack.zip "IndoorNight Performance.zip"
+```
+
+If `Scalability.ini` in staging is read-only from a prior install test: `chmod u+w` before overwrite, or skip when unchanged.
+
+## Pre-upload checklist
+
+- [ ] `MOD_BUILD` in staged `main.lua` matches README and changelog
+- [ ] Four Lua files only under `G1R_IndoorNight/Scripts/`
+- [ ] MaxPerf config copied from `.maxperf` sources, not live CrossOver `Engine.ini`
+- [ ] `00_README_INSTALLATION.txt` updated (both Part A config + Part B mod)
+- [ ] Zip lists 17 entries for full pack (folders + 4 lua + 3 ini + README)
+- [ ] Changelog written for players (not a raw diff dump)
+
+## Changelog style
+
+Short, plain language. Two blocks: **mod** and **config**. End with one install line + log verify string.
+
+Example:
+
+> **v3.6.2 + MaxPerf config v13**
+>
+> **Indoor Sky Dimming mod** — less polling outdoors; `SHADOWS_ON_PROFILE` in config.lua for shadows-on profiles.
+>
+> **MaxPerf config** — smoother CrossOver play, camp/storm stutter fixes, shader startup tweak, HDR on by default.
+>
+> Install config + mod folder; enable in `mods.txt`. Log should show `build=v3.6.2-outdoorpoll`.
+
+Compare against previous zip before writing changelog:
+
+```bash
+diff -u ~/Downloads/ModUploads/G1R_IndoorNight_NexusPack/Config_MaxPerf/.../Engine.ini \
+        "$REPO/Config/ProfilePack/.../Engine.ini.maxperf"
+diff -q ~/Downloads/ModUploads/G1R_IndoorNight_NexusPack/G1R_IndoorNight/Scripts/*.lua \
+        "$REPO/Scripts/"*.lua
+```
+
+## README in pack
+
+`00_README_INSTALLATION.txt` is **player-facing** — lives only in the staging folder, not in repo. Template sections:
+
+1. What the pack contains (mod + optional config)
+2. Part A — config paths + install + read-only `Engine.ini`
+3. Part B — UE4SS mod paths + `mods.txt` + F7
+4. Verify line (`build=…` in UE4SS.log)
+5. Troubleshooting (HDR, read-only ini, mod not loading)
+
+After editing README in staging, re-zip so the archive picks up changes.
+
+## Related repo docs
+
+- Player install / dev symlink: [README.md](./README.md)
+- Full profile pack (all variants + switcher): [Config/ProfilePack/](./Config/ProfilePack/)
+- Domain terms: [CONTEXT.md](./CONTEXT.md)
