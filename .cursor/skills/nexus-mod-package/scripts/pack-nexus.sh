@@ -10,7 +10,7 @@ usage() {
 Usage: $(basename "$0") [--full | --scripts-only | --config-only] [--engine-ver N]
 
   --full           Lua + MaxPerf config → G1R_IndoorNight_NexusPack.zip (default)
-  --scripts-only   Four Lua files → G1R_IndoorNight.zip
+  --scripts-only   Five Lua files → G1R_IndoorNight.zip
   --config-only    MaxPerf config only → G1R_IndoorNight_MaxPerf_vN.zip (requires --engine-ver)
   --engine-ver N   Engine.ini generation for config-only zip name (e.g. 13)
 EOF
@@ -36,7 +36,7 @@ PACK="$UPLOADS/G1R_IndoorNight_NexusPack"
 CFG_SRC="$REPO/Config/ProfilePack/Local/G1R/Saved/Config/Windows"
 CFG_DST="$PACK/Config_MaxPerf/Local/G1R/Saved/Config/Windows"
 SCR_DST="$PACK/G1R_IndoorNight/Scripts"
-LUA=(main.lua config.lua indoornight_brightness.lua indoornight_reload.lua)
+LUA=(main.lua config.lua indoornight_control.lua indoornight_brightness.lua indoornight_reload.lua)
 CHECK_LUA="$SCRIPT_DIR/count-lua-locals.py"
 LUA_LOCAL_LIMIT=200
 

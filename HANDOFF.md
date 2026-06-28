@@ -25,7 +25,7 @@ Indoors = buildings, caves, dungeons, mines — detected via UDS **Player Occlus
 | Occlusion threshold | **Starts at ~0.5**; below = vanilla sky |
 | Torches / fires | **Vanilla brightness** |
 | Extra Interior Exposure | **Respect player setting (B)** — mod does not counteract; user balances sliders |
-| Toggle | **F7** — on by default; **instant** restore when off |
+| Toggle | **F7** — cycle **Mod Control Mode** (Auto → Always On → Always Off); default **Auto** |
 | Config | **Full block** at top of `Scripts/main.lua` |
 | Mod name | `G1R_IndoorNight` |
 

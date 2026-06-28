@@ -58,12 +58,12 @@ else
 fi
 
 if [[ -f "$SNAP_LOG" ]]; then
-  pass "discovery/snapshots.log exists (F8 was pressed)"
+  pass "discovery/snapshots.log exists (legacy discovery artifact)"
   echo ""
   echo "--- latest snapshot tail ---"
   tail -40 "$SNAP_LOG"
 else
-  echo "INFO discovery/snapshots.log missing — press F8 at each pose after load"
+  echo "INFO discovery/snapshots.log missing — historical F8 snapshots no longer shipped (F7 only)"
 fi
 
 echo ""

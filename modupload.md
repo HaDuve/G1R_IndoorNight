@@ -30,13 +30,14 @@ G1R_IndoorNight_NexusPack/
   G1R_IndoorNight/Scripts/
     main.lua
     config.lua
+    indoornight_control.lua
     indoornight_brightness.lua
     indoornight_reload.lua
 ```
 
 ### Scripts-only (`G1R_IndoorNight.zip`)
 
-Same four Lua files under `G1R_IndoorNight/Scripts/`. No config, no README required unless Nexus page asks for it.
+Same five Lua files under `G1R_IndoorNight/Scripts/`. No config, no README required unless Nexus page asks for it.
 
 ### Config-only update
 
@@ -59,6 +60,7 @@ Active filenames in the pack (`Engine.ini`, not `Engine.ini.maxperf`) — player
 
 - `main.lua`
 - `config.lua`
+- `indoornight_control.lua`
 - `indoornight_brightness.lua`
 - `indoornight_reload.lua`
 
@@ -82,7 +84,7 @@ Before zipping, align these:
 
 **Current shipped (update when you release):**
 
-- Mod: `v3.6.3-1spoll`
+- Mod: `v3.7.0-modcontrol`
 - MaxPerf config: Engine.ini **v13**
 - Last full pack: Jun 2026 → `G1R_IndoorNight_NexusPack.zip`
 
@@ -99,6 +101,7 @@ cp "$REPO/Config/ProfilePack/Local/G1R/Saved/Config/Windows/Engine.ini.maxperf" 
 cp "$REPO/Config/ProfilePack/Local/G1R/Saved/Config/Windows/GameUserSettings.ini.maxperf" "$CFG/GameUserSettings.ini"
 cp "$REPO/Config/ProfilePack/Local/G1R/Saved/Config/Windows/Scalability.ini" "$CFG/Scalability.ini"
 cp "$REPO/Scripts/main.lua" "$REPO/Scripts/config.lua" \
+   "$REPO/Scripts/indoornight_control.lua" \
    "$REPO/Scripts/indoornight_brightness.lua" "$REPO/Scripts/indoornight_reload.lua" "$SCR/"
 
 # Edit $PACK/00_README_INSTALLATION.txt (version + verify string)
@@ -112,11 +115,11 @@ If `Scalability.ini` in staging is read-only from a prior install test: `chmod u
 ## Pre-upload checklist
 
 - [ ] `MOD_BUILD` in staged `main.lua` matches README and changelog
-- [ ] Four Lua files only under `G1R_IndoorNight/Scripts/`
+- [ ] Five Lua files only under `G1R_IndoorNight/Scripts/`
 - [ ] Lua local limit check passes (pack script runs `count-lua-locals.py`; warns if any function exceeds 200 locals)
 - [ ] MaxPerf config copied from `.maxperf` sources, not live CrossOver `Engine.ini`
 - [ ] `00_README_INSTALLATION.txt` updated (both Part A config + Part B mod)
-- [ ] Zip lists 17 entries for full pack (folders + 4 lua + 3 ini + README)
+- [ ] Zip lists 18 entries for full pack (folders + 5 lua + 3 ini + README)
 - [ ] Changelog written for players (not a raw diff dump)
 
 ## Changelog (agent-written, not scripted)
@@ -155,7 +158,7 @@ diff -q ~/Downloads/ModUploads/G1R_IndoorNight_NexusPack/G1R_IndoorNight/Scripts
 
 1. What the pack contains (mod + optional config)
 2. Part A — config paths + install + read-only `Engine.ini`
-3. Part B — UE4SS mod paths + `mods.txt` + F7
+3. Part B — UE4SS mod paths + `mods.txt` + F7 (Mod Control Mode cycle)
 4. Verify line (`build=…` in UE4SS.log)
 5. Troubleshooting (HDR, read-only ini, mod not loading)
 

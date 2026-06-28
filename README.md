@@ -37,16 +37,19 @@ G1R_IndoorNight/Scripts/main.lua
 
 ## Usage
 
-- **F7** — toggle mod on/off mid-session (instant day restore when off)
-- On by default at load; polls `IsUnderRoof` every 1 s and applies v3.1 indoor dimming or day baseline
+- **F7** — cycle **Mod Control Mode**: **Auto** → **Always On** → **Always Off** → **Auto**
+  - **Auto** — gate-driven **Indoor Sky Dimming** (`IsUnderRoof`)
+  - **Always On** — forced indoor profile everywhere (ignores gate)
+  - **Always Off** — instant vanilla sky restore (no mod writes)
+- Default **Auto** at load (`CONTROL_MODE` in `config.lua`); F7 changes are session-only
 
 ### Discovery mode (dev only)
 
-Set `DISCOVERY_MODE = true` to re-enable read-only F8 snapshots and F10/F11/F12 spikes. See [docs/DISCOVERY.md](./docs/DISCOVERY.md).
+Set `DISCOVERY_MODE = true` for extra DEBUG console logging. No F8–F12 keybinds (F7 only). See [docs/DISCOVERY.md](./docs/DISCOVERY.md).
 
 ## Config
 
-Edit `Scripts/main.lua` — CONFIG block at top. No rebuild; save and relaunch (or UE4SS hot-reload if enabled).
+Edit `Scripts/config.lua` — reload UE4SS / restart game to apply.
 
 ### Engine profiles (CrossOver / max-perf)
 
@@ -54,22 +57,10 @@ Optional `Engine.ini` + `GameUserSettings.ini` profile pack with switcher: [Conf
 
 | Setting | Default | Meaning |
 |---------|---------|---------|
-| `ENABLED` | `true` | Start with mod active |
-| `TOGGLE_KEY` | `Key.F7` | In-game toggle |
-| `TARGET_TOD` | `2300` | UDS time-of-day at full occlusion (0–2400) |
-| `OCCLUSION_START` | `0.5` | Below this, no blend |
-| `OCCLUSION_FULL` | `1.0` | Full night-level sky contribution at max occlusion |
-| `DEBUG` | `false` | Log occlusion / TOD to UE4SS console |
-| `DISCOVERY_MODE` | `false` | Read-only instrumentation; disables sky writes when `true` |
-| `SNAPSHOT_KEY` | `Key.F8` | Print filtered UDS candidate snapshot |
-| `TOD_SPIKE_ENABLED` | `true` | F10 one-shot TOD write test (Slice 2c; discovery mode only) |
-| `TOD_SPIKE_KEY` | `Key.F10` | Key for TOD spike (avoid F9 = G1R quickload) |
-| `G1R_LEVER_SPIKE_ENABLED` | `true` | F11 G1R skylight / SetSettings spike (Slice 2d) |
-| `G1R_LEVER_SPIKE_KEY` | `Key.F11` | Key for G1R lever spike |
-| `G1R_SKY_MULTIPLIER_TARGET` | `0.0` | F11 Dynamic/Target Sky Light Multiplier |
-| `G1R_SETTINGS_NIGHT_PROFILE` | see `main.lua` | F11 `SetSettings` bundle (SkyLightIntensity, OverallIntensity, …) |
-| `G1R_DIRECT_NIGHT_WRITES` | see `main.lua` | F11 direct UDS fields (sun, exposure, interior multipliers) |
+| `CONTROL_MODE` | `"auto"` | Boot mode: `"auto"`, `"always_on"`, `"always_off"` |
+| `ENABLED` | `true` | Legacy; maps to `auto` / `always_off` if `CONTROL_MODE` unset |
+| `TOGGLE_KEY` | `Key.F7` | In-game mode cycle (F7 only shipped) |
 
 ## Status
 
-Slice 3 shipped — **v3.3.12 (HITL accepted)** auto indoor dimming on **`IsUnderRoof`**; day/night split profiles; F7 toggle. See [CONTEXT.md](./CONTEXT.md) (lever rules) and [DISCOVERY.md](./docs/DISCOVERY.md) (accepted targets).
+Slice 7 — **v3.7.0-modcontrol** three-state **Mod Control Mode** (F7 cycle); F8–F12 keybinds retired. See [CONTEXT.md](./CONTEXT.md) and [docs/adr/0001-mod-control-mode.md](./docs/adr/0001-mod-control-mode.md).

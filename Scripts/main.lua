@@ -12,6 +12,7 @@ end
 
 local function loadUserConfig()
     local defaults = {
+        CONTROL_MODE = "auto",
         ENABLED = true,
         TOGGLE_KEY = Key.F7,
         SHADOWS_ON_PROFILE = false,
@@ -37,6 +38,7 @@ local function secToPolls(sec)
 end
 
 local CONFIG = loadUserConfig()
+local control = require("indoornight_control")
 require("indoornight_brightness").init(
     CONFIG.INDOOR_DAY_BRIGHTNESS,
     CONFIG.INDOOR_NIGHT_BRIGHTNESS,
@@ -59,7 +61,7 @@ local TARGET_TOD        = 2300.0    -- UDS 0–2400; ~23:00 moonlit night
 local OCCLUSION_START   = 0.5       -- below: no blend
 local OCCLUSION_FULL    = 1.0       -- at/above: full TARGET_TOD blend
 local DEBUG             = false
-local MOD_BUILD         = "v3.6.3-1spoll"  -- boot banner — confirm this string in UE4SS.log after reload
+local MOD_BUILD         = "v3.7.0-modcontrol"  -- boot banner — confirm this string in UE4SS.log after reload
 local INGAME_WARMUP_POLLS = msToPolls(5000)       -- after ClientRestart before any sky probe
 local RAPID_RESTART_EXTRA_WARMUP_POLLS = msToPolls(5000)
 local STABLE_READY_POLLS = msToPolls(1500)      -- consecutive ready polls before first sky write
@@ -287,7 +289,7 @@ local INDOOR_DETECTION_FLOAT_FIELDS = {
 local INDOOR_DETECTION_RECENT_MAX_AGE_SEC = 5.0
 
 -- ---- state -----------------------------------------------------------------
-local modEnabled = CONFIG.ENABLED
+local controlMode = control.resolveFromConfig(CONFIG)
 local udsCache = nil
 local udsCacheAddr = nil
 local gothicControllerCache = nil
@@ -932,7 +934,7 @@ local function appendIndoorDetectionPath(lines)
 
     lines[#lines + 1] = ""
     lines[#lines + 1] = "    compare protocol                       = note bDetectedIsIndoor + DetectionConfidence outdoor vs indoor"
-    lines[#lines + 1] = "    ship fallback if dead                  = F7 manual toggle (no auto gate)"
+    lines[#lines + 1] = "    ship fallback if dead                  = Mod Control Mode Always On / Always Off"
 
     return comp
 end
@@ -2045,9 +2047,39 @@ local function tickGateStability(uds, underRoof, tod, gameNight)
 end
 
 -- ---- main pass (Slice 3: IsUnderRoof gate + v3.2 lever) --------------------
+local function passStablyInside(uds, tod, gameNight)
+    local mode = gameNight and "indoor_night" or "indoor_day"
+    local modeChanged = mode ~= lastAppliedMode
+
+    if mode == "indoor_night" then
+        indoorNightPolls = indoorNightPolls + 1
+        if modeChanged or indoorNightPolls >= INDOOR_NIGHT_REFRESH_POLLS then
+            applyIndoorProfile(uds, true)
+            announceApply(mode, tod, uds)
+            commitLastStableProfile("indoor_night", true, true)
+            indoorNightPolls = 0
+        elseif indoorNightPolls % INDOOR_NIGHT_PROBE_POLLS == 0 then
+            local reverted = nightStateReverted(uds)
+            if reverted then
+                logNightReadback(uds, "probe between refresh", true)
+            end
+        end
+        lastAppliedMode = "indoor_night"
+        return
+    end
+
+    indoorNightPolls = 0
+    if modeChanged then
+        applyIndoorProfile(uds, false)
+        announceApply(mode, tod, uds)
+        commitLastStableProfile("indoor_day", true, false)
+    end
+    lastAppliedMode = "indoor_day"
+end
+
 local function pass()
     if DISCOVERY_MODE then return end
-    if not modEnabled then return end
+    if control.shouldSkipWrites(controlMode) then return end
     if not pollEnabled then return end
 
     if rapidRestartWarmup == 2 then return end
@@ -2102,9 +2134,15 @@ local function pass()
         return
     end
 
-    local underRoof = tryIsUnderRoof(pawn)
     local tod = readTimeOfDay(uds)
     local gameNight = isGameNight(tod)
+
+    if control.shouldForceIndoor(controlMode) then
+        passStablyInside(uds, tod, gameNight)
+        return
+    end
+
+    local underRoof = tryIsUnderRoof(pawn)
     local gateUnavailableResetAfter = gateUnavailableResetPolls()
 
     if skyTransitionActive then
@@ -2182,66 +2220,82 @@ local function pass()
         return
     end
 
-    -- Stably inside: game-clock-only indoor_day ↔ indoor_night stays instant.
-    local mode = gameNight and "indoor_night" or "indoor_day"
-    local modeChanged = mode ~= lastAppliedMode
+    passStablyInside(uds, tod, gameNight)
+end
 
-    if mode == "indoor_night" then
-        indoorNightPolls = indoorNightPolls + 1
-        if modeChanged or indoorNightPolls >= INDOOR_NIGHT_REFRESH_POLLS then
-            applyIndoorProfile(uds, true)
-            announceApply(mode, tod, uds)
-            commitLastStableProfile("indoor_night", true, true)
-            indoorNightPolls = 0
-        elseif indoorNightPolls % INDOOR_NIGHT_PROBE_POLLS == 0 then
-            local reverted = nightStateReverted(uds)
-            if reverted then
-                logNightReadback(uds, "probe between refresh", true)
-            end
-        end
-        lastAppliedMode = "indoor_night"
+local function setOutdoorBaselineState()
+    lastStableUnderRoof = false
+    lastStableMode = "outdoor"
+    lastAppliedMode = "outdoor"
+    lastStableLeverSnapshot = buildTargetLeverSnapshot("outdoor", false)
+end
+
+local function setForcedIndoorBaselineState(gameNight)
+    local mode = gameNight and "indoor_night" or "indoor_day"
+    lastStableUnderRoof = true
+    lastStableMode = mode
+    lastAppliedMode = mode
+    lastStableLeverSnapshot = buildTargetLeverSnapshot(mode, gameNight)
+end
+
+local function applyControlModeInstant(mode)
+    local uds = findUds()
+    if not safeObj(uds) then return end
+    local tod = readTimeOfDay(uds)
+    local gameNight = isGameNight(tod)
+
+    if mode == "always_off" then
+        applyDayRestore(uds)
+        setOutdoorBaselineState()
         return
     end
 
-    indoorNightPolls = 0
-    if modeChanged then
-        applyIndoorProfile(uds, false)
-        announceApply(mode, tod, uds)
-        commitLastStableProfile("indoor_day", true, false)
+    if mode == "always_on" then
+        applyIndoorProfile(uds, gameNight)
+        setForcedIndoorBaselineState(gameNight)
+        return
     end
-    lastAppliedMode = "indoor_day"
+
+    local controller = findPlayerController()
+    local pawn = controller and findPlayerPawn(controller) or nil
+    local underRoof = tryIsUnderRoof(pawn)
+    if underRoof then
+        applyIndoorProfile(uds, gameNight)
+        setForcedIndoorBaselineState(gameNight)
+    else
+        applyDayRestore(uds)
+        setOutdoorBaselineState()
+    end
 end
 
-local function setModEnabled(next)
-    if modEnabled == next then return end
-    modEnabled = next
+local function setControlMode(next)
+    next = control.normalize(next)
+    if controlMode == next then return end
+    controlMode = next
     lastAppliedMode = nil
     lastStableUnderRoof = nil
     lastStableMode = nil
     lastStableLeverSnapshot = nil
     resetGateStability()
     resetSkyTransition()
-    if not modEnabled then
-        local uds = findUds()
-        if uds then
-            applyDayRestore(uds)
-        end
+    if not DISCOVERY_MODE then
+        applyControlModeInstant(next)
     end
-    print(string.format("[G1R_IndoorNight] %s", modEnabled and "ENABLED" or "DISABLED"))
+    print(string.format("[G1R_IndoorNight] Mod Control Mode: %s", control.label(next)))
+end
+
+local function cycleControlMode()
+    setControlMode(control.cycle(controlMode))
 end
 
 -- ---- bootstrap -------------------------------------------------------------
 if DISCOVERY_MODE then
-    local spikeParts = {}
-    if TOD_SPIKE_ENABLED then spikeParts[#spikeParts + 1] = "F10 = TOD spike" end
-    if G1R_LEVER_SPIKE_ENABLED then spikeParts[#spikeParts + 1] = "F11 = G1R lever spike (v3.1)" end
-    if G1R_LEVER_RESET_ENABLED then spikeParts[#spikeParts + 1] = "F12 = restore day baseline" end
-    local spikeHint = #spikeParts > 0 and ("; " .. table.concat(spikeParts, "; ")) or ""
-    print("[G1R_IndoorNight] loaded — DISCOVERY MODE (F8 = snapshot (Slice 2b inside detection)" .. spikeHint .. "; output -> snapshots.log + UE4SS.log)")
+    print("[G1R_IndoorNight] loaded — DISCOVERY MODE (DEBUG logging; F7 Mod Control Mode only; no sky writes) build=" .. MOD_BUILD)
 else
     print(string.format(
-        "[G1R_IndoorNight] loaded — Slice 6c %s (F7 toggle; config.lua%s; %.0fs enter gate / %.1fs exit gate + %.1fs sky enter / %.1fs revert; poll %dms)",
+        "[G1R_IndoorNight] loaded — %s Mod Control Mode: %s (F7 cycle%s; %.0fs enter gate / %.1fs exit gate + %.1fs sky enter / %.1fs revert; poll %dms)",
         MOD_BUILD,
+        control.label(controlMode),
         CONFIG.SHADOWS_ON_PROFILE and "; SHADOWS_ON_PROFILE" or "",
         CONFIG.ENTER_GATE_SEC,
         CONFIG.EXIT_GATE_SEC,
@@ -2251,42 +2305,9 @@ else
     ))
 end
 
-if DISCOVERY_MODE then
-    RegisterKeyBind(SNAPSHOT_KEY, function()
-        ExecuteInGameThread(function()
-            print("[G1R_IndoorNight] F8 snapshot requested...")
-            do local ok, err = pcall(discoverySnapshot); if not ok then print("[G1R_IndoorNight] F8 snapshot error: " .. tostring(err)) end end
-        end)
-    end)
-
-    if TOD_SPIKE_ENABLED then
-        RegisterKeyBind(TOD_SPIKE_KEY, function()
-            ExecuteInGameThread(function()
-                do local ok, err = pcall(runTodSpike); if not ok then print("[G1R_IndoorNight] F10 TOD spike error: " .. tostring(err)) end end
-            end)
-        end)
-    end
-
-    if G1R_LEVER_SPIKE_ENABLED then
-        RegisterKeyBind(G1R_LEVER_SPIKE_KEY, function()
-            ExecuteInGameThread(function()
-                do local ok, err = pcall(runG1rLeverSpike); if not ok then print("[G1R_IndoorNight] F11 G1R lever spike error: " .. tostring(err)) end end
-            end)
-        end)
-    end
-
-    if G1R_LEVER_RESET_ENABLED then
-        RegisterKeyBind(G1R_LEVER_RESET_KEY, function()
-            ExecuteInGameThread(function()
-                do local ok, err = pcall(runG1rLeverReset); if not ok then print("[G1R_IndoorNight] F12 day restore error: " .. tostring(err)) end end
-            end)
-        end)
-    end
-end
-
 RegisterKeyBind(CONFIG.TOGGLE_KEY, function()
     ExecuteInGameThread(function()
-        setModEnabled(not modEnabled)
+        cycleControlMode()
     end)
 end)
 
@@ -2316,15 +2337,15 @@ end)
 require("indoornight_reload").bind({
     findUds = findUds,
     applyDayRestore = applyDayRestore,
+    applyIndoorProfile = applyIndoorProfile,
+    readTimeOfDay = readTimeOfDay,
+    isGameNight = isGameNight,
     buildTargetLeverSnapshot = buildTargetLeverSnapshot,
     safeObj = safeObj,
     MOD_BUILD = MOD_BUILD,
-    setOutdoorBaseline = function()
-        lastStableUnderRoof = false
-        lastStableMode = "outdoor"
-        lastAppliedMode = "outdoor"
-        lastStableLeverSnapshot = buildTargetLeverSnapshot("outdoor", false)
-    end,
+    getControlMode = function() return controlMode end,
+    setOutdoorBaseline = setOutdoorBaselineState,
+    setForcedIndoorBaseline = setForcedIndoorBaselineState,
 })
 
 RegisterLoadMapPostHook(function(Engine, World)

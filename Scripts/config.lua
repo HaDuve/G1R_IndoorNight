@@ -2,7 +2,11 @@
 -- Missing or broken file: main.lua falls back to the same defaults below.
 
 return {
-    -- Mod on at load. F7 toggles mid-session regardless.
+    -- Boot Mod Control Mode: "auto" | "always_on" | "always_off"
+    -- F7 cycles mode mid-session (session-only; resets to CONTROL_MODE on reload).
+    CONTROL_MODE = "auto",
+
+    -- Legacy: true -> auto, false -> always_off (ignored when CONTROL_MODE is set).
     ENABLED = true,
     TOGGLE_KEY = Key.F7,
 

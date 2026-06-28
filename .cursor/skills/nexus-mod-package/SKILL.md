@@ -32,7 +32,7 @@ description: Package G1R_IndoorNight for Nexus/download release — stage Lua mo
 
 ## Include / exclude
 
-**Lua (exactly four files):** `main.lua`, `config.lua`, `indoornight_brightness.lua`, `indoornight_reload.lua`
+**Lua (exactly five files):** `main.lua`, `config.lua`, `indoornight_control.lua`, `indoornight_brightness.lua`, `indoornight_reload.lua`
 
 **Never in upload zips:** `check-night-feedback.sh`, `tools/`, `docs/`, `install.sh`, profile variants (`Engine.ini.streaming-*`, `switch-g1r-profile.sh`), repo markdown, logs.
 
@@ -103,10 +103,10 @@ v3.6.1-configlua
 ## Pre-upload checklist
 
 - [ ] `MOD_BUILD` matches README and changelog title line
-- [ ] Four Lua files only under `G1R_IndoorNight/Scripts/`
+- [ ] Five Lua files only under `G1R_IndoorNight/Scripts/`
 - [ ] Lua local limit: each file ≤200 locals per function (`count-lua-locals.py`; pack script warns automatically)
 - [ ] Config from `.maxperf` sources
-- [ ] Full pack zip ≈ 17 file entries (dirs + 4 lua + 3 ini + README); no `.DS_Store`
+- [ ] Full pack zip ≈ 18 file entries (dirs + 5 lua + 3 ini + README); no `.DS_Store`
 - [ ] Changelog delivered in response (human, copy-paste format above)
 
 ## Staging paths (local, not in git)

@@ -1,5 +1,7 @@
 # Discovery Protocol — Slice 1
 
+> **Note (v3.7.0):** Shipped mod registers **F7 only** (Mod Control Mode). F8–F12 keybinds are retired; references below are historical protocol from discovery slices.
+
 **Status:** **Slice 6d v3.5.1 (HITL tuning).** Slice 3 v3.3.12 baseline accepted. Tracker issues #1, #4, #5, #6 closed (2026-06-14).
 
 ## Slice 6d — HITL transition feel validation (**v3.5.1 — tuning applied**)
