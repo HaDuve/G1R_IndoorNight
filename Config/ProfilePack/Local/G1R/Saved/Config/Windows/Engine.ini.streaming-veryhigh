@@ -1,0 +1,58 @@
+;===========================================================
+; Gothic 1 Remake - CrossOver / macOS Engine Tweaks
+; Profile: STREAMING VERY HIGH — streaming + async + grass off; shadows via GameUserSettings
+; Switch: switch-g1r-profile.sh streaming-veryhigh
+; Reference: M1 Max + CrossOver 27 + GPT 4 Beta 1 (~30 fps native; DLSS Quality + FG ~60 — see TEST.md)
+;===========================================================
+
+[/Script/Engine.RendererSettings]
+r.Streaming.UseFixedPoolSize=True
+r.Streaming.PoolSize=6144
+
+[SystemSettings]
+; ---------- Texture streaming (G1R Streaming Stutter Fix: 12GB / 6144 MB pool) ----------
+r.TextureStreaming=1
+r.Streaming.UseFixedPoolSize=1
+r.Streaming.PoolSize=6144
+r.Streaming.LimitPoolSizeToVRAM=0
+r.Streaming.MaxTempMemoryAllowed=512
+r.Streaming.DefragDynamicBounds=1
+r.Streaming.FramesForFullUpdate=30
+r.Streaming.UseBackgroundThreadPool=1
+
+; ---------- Grass off (reporter: Very High preset + grass disabled in ini) ----------
+grass.Enable=0
+
+; ---------- Frame pacing: VSync off, cap 58 ----------
+t.MaxFPS=58
+rhi.SyncInterval=0
+
+; ---------- PSO / shader cache (runtime only) ----------
+r.PSOPrecaching=1
+r.ShaderPipelineCache.Enabled=1
+r.ShaderPipelineCache.StartupMode=2
+r.ShaderPipelineCache.BatchSize=64
+r.ShaderPipelineCache.BackgroundBatchSize=8
+r.ShaderPipelineCache.BatchTime=2
+r.ShaderPipelineCache.BackgroundBatchTime=1
+r.ShaderPipelineCache.LazyLoadShadersWhenPSOCacheIsPresent=0
+r.ShaderPipelineCache.GameFileMaskEnabled=0
+
+; ---------- D3DMetal stability ----------
+r.HZBOcclusion=0
+r.OneFrameThreadLag=1
+r.FinishCurrentFrame=0
+
+; ---------- Async loading (smoother streaming) ----------
+s.AsyncLoadingThreadEnabled=1
+s.AsyncLoadingTimeLimit=5
+s.PriorityAsyncLoadingExtraTime=15
+s.LevelStreamingActorsUpdateTimeLimit=5
+s.PriorityLevelStreamingActorsUpdateExtraTime=15
+
+[/Script/Engine.StreamingSettings]
+s.AsyncLoadingThreadEnabled=1
+s.IoDispatcherCacheSizeMB=384
+
+[/Script/Engine.GarbageCollectionSettings]
+gc.TimeBetweenPurgingPendingKillObjects=30.0

@@ -1,38 +1,63 @@
 -- ============================================================================
 --  G1R_IndoorNight — UE4SS Lua mod for Gothic 1 Remake
---  IsUnderRoof-gated indoor sky dimming (UDS v3.2 lever). Game clock untouched.
+--  User settings: Scripts/config.lua (reload UE4SS to apply)
 -- ============================================================================
 
--- ---- CONFIG ----------------------------------------------------------------
-local ENABLED           = true
-local TOGGLE_KEY        = Key.F7
+-- ---- internal timing + config load -----------------------------------------
+local PASS_MS           = 100       -- poll interval (ms); do not change unless you know UE4SS loop math
+
+local function loadUserConfig()
+    local defaults = {
+        ENABLED = true,
+        TOGGLE_KEY = Key.F7,
+        SHADOWS_ON_PROFILE = false,
+        INDOOR_DAY_BRIGHTNESS = 1.0,
+        INDOOR_NIGHT_BRIGHTNESS = 1.2,
+        TRANSITION_ENTER_SEC = 4.0,
+        EXIT_GATE_SEC = 0.5,
+        ENTER_GATE_SEC = 3.0,
+    }
+    local cfg = {}
+    for k, v in pairs(defaults) do cfg[k] = v end
+    local ok, user = pcall(require, "config")
+    if ok and type(user) == "table" then
+        for k, v in pairs(user) do cfg[k] = v end
+    else
+        print("[G1R_IndoorNight] config.lua not found or invalid — using defaults")
+    end
+    return cfg
+end
+
+local function secToPolls(sec)
+    return math.max(1, math.floor(sec * 1000 / PASS_MS))
+end
+
+local CONFIG = loadUserConfig()
+require("indoornight_brightness").init(
+    CONFIG.INDOOR_DAY_BRIGHTNESS,
+    CONFIG.INDOOR_NIGHT_BRIGHTNESS,
+    CONFIG.SHADOWS_ON_PROFILE
+)
+
+local TRANSITION_ENTER_MS = CONFIG.TRANSITION_ENTER_SEC * 1000
+local TRANSITION_ENTER_POLLS = math.max(1, math.floor(TRANSITION_ENTER_MS / PASS_MS))
+local TRANSITION_REVERT_MS = 1000
+local TRANSITION_REVERT_POLLS = math.max(1, math.floor(TRANSITION_REVERT_MS / PASS_MS))
+local GATE_STABILITY_ENTER_INDOOR_POLLS = { secToPolls(CONFIG.ENTER_GATE_SEC) }
+local GATE_STABILITY_EXIT_INDOOR_POLLS  = { secToPolls(CONFIG.EXIT_GATE_SEC) }
+local GATE_STABILITY_MAX_RESET_POLLS = math.max(
+    GATE_STABILITY_ENTER_INDOOR_POLLS[#GATE_STABILITY_ENTER_INDOOR_POLLS],
+    GATE_STABILITY_EXIT_INDOOR_POLLS[#GATE_STABILITY_EXIT_INDOOR_POLLS]
+)
+
+-- ---- developer / discovery constants (not in config.lua) -----------------
 local TARGET_TOD        = 2300.0    -- UDS 0–2400; ~23:00 moonlit night
 local OCCLUSION_START   = 0.5       -- below: no blend
 local OCCLUSION_FULL    = 1.0       -- at/above: full TARGET_TOD blend
-local PASS_MS           = 100       -- poll interval (ms)
--- Slice 6b: Sky Transition enter — linear lerp of allowed levers after Gate Stability arms.
-local TRANSITION_ENTER_MS = 4000
-local TRANSITION_ENTER_POLLS = math.max(1, math.floor(TRANSITION_ENTER_MS / PASS_MS))
--- Slice 6c: fast revert on gate flip during enter — shorter linear blend back to Last Stable Profile.
-local TRANSITION_REVERT_MS = 1000
-local TRANSITION_REVERT_POLLS = math.max(1, math.floor(TRANSITION_REVERT_MS / PASS_MS))
--- Slice 6a/6d: Gate Stability — asymmetric debounce (bias toward outdoor light).
--- Exit stable indoor → outdoor: 1s. Enter outdoor → indoor: 1s / 2s / 3s.
-local GATE_STABILITY_ENTER_INDOOR_SEC = { 1, 2, 3 }
-local GATE_STABILITY_EXIT_INDOOR_SEC  = { 1 }
-local function buildGateCheckpointPolls(secList)
-    local polls = {}
-    for i, sec in ipairs(secList) do
-        polls[i] = math.max(1, math.floor((sec * 1000) / PASS_MS))
-    end
-    return polls
-end
-local GATE_STABILITY_ENTER_INDOOR_POLLS = buildGateCheckpointPolls(GATE_STABILITY_ENTER_INDOOR_SEC)
-local GATE_STABILITY_EXIT_INDOOR_POLLS  = buildGateCheckpointPolls(GATE_STABILITY_EXIT_INDOOR_SEC)
-local GATE_STABILITY_MAX_RESET_POLLS = GATE_STABILITY_ENTER_INDOOR_POLLS[#GATE_STABILITY_ENTER_INDOOR_POLLS]
 local DEBUG             = false
-local MOD_BUILD         = "v3.5.1-s6d"  -- boot banner — confirm this string in UE4SS.log after reload
-local INGAME_WARMUP_POLLS = 30      -- ~3s after ClientRestart before sky writes
+local MOD_BUILD         = "v3.6.1-configlua"  -- boot banner — confirm this string in UE4SS.log after reload
+local INGAME_WARMUP_POLLS = 50      -- ~5s after ClientRestart before any sky probe
+local STABLE_READY_POLLS  = 15      -- ~1.5s consecutive ready polls before first sky write
 local INDOOR_NIGHT_REFRESH_POLLS = 20  -- re-apply game-night profile ~2s (frame-fight)
 local INDOOR_NIGHT_PROBE_POLLS = 5       -- passive readback ~500ms (detect G1R revert)
 
@@ -45,52 +70,8 @@ local TOD_SPIKE_KEY     = Key.F10
 -- Slice 2d: G1R skylight / SetSettings lever spike (F11).
 local G1R_LEVER_SPIKE_ENABLED = true
 local G1R_LEVER_SPIKE_KEY     = Key.F11
--- v3.3.12 HITL accepted: dark-cave indoor feel; cool skylight hue night only.
--- Slice 6d HITL: +10% brightness on day/night indoor crush targets (×1.10).
-local INDOOR_DARKEN_VS_V31      = 0.80
 local GAME_NIGHT_TOD_START      = 2000   -- UDS 0–2400 (~20:00)
 local GAME_NIGHT_TOD_END          = 600    -- ~06:00
-local G1R_SKY_MULTIPLIER_TARGET   = 0.46   -- v3.3.12 0.42 × 1.10 (Slice 6d)
-local G1R_NIGHT_INTERIOR_SKYLIGHT_MULT = 1.32  -- v3.3.12 1.20 × 1.10
-local G1R_NIGHT_INTERIOR_MOON_MULT     = 1.27  -- v3.3.12 1.15 × 1.10
-local G1R_INDOOR_SKYLIGHT_TEMP    = -0.60  -- SetSettings: cool / blue-ish (night only)
-local G1R_INDOOR_SATURATION       = 0.92
-local G1R_INDOOR_SKYLIGHT_COLOR   = { R = 0.62, G = 0.76, B = 1.00, A = 1.00 }
--- Night: hue + skylight brightness; do NOT write Exposure (respect G1R user slider).
-local G1R_SETTINGS_INDOOR_NIGHT_SKYLIGHT_HUE = {
-    SkyLightTemperature = G1R_INDOOR_SKYLIGHT_TEMP,
-    Saturation = G1R_INDOOR_SATURATION,
-    NightBrightness = 0.44,       -- v3.3.12 0.40 × 1.10 (Slice 6d)
-    OverallIntensity = 1.19,      -- v3.3.12 1.08 × 1.10 (Slice 6d)
-}
-local G1R_SETTINGS_INDOOR_DAY_PROFILE = {
-    SkyLightIntensity = 0.385,    -- v3.3.12 0.35 × 1.10 (Slice 6d)
-    OverallIntensity = 0.946,     -- v3.3.12 0.86 × 1.10 (Slice 6d)
-    DirectionalBalance = 0.08,
-    NightBrightness = 0.418,      -- v3.3.12 0.38 × 1.10 (Slice 6d)
-    SunAngle = 100.0,             -- zenith; top-down bias via SetSettings (not sun crush)
-}
-local G1R_SETTINGS_INDOOR_NIGHT_PARITY_PROFILE = {
-    SkyLightIntensity = 0.231,    -- v3.3.12 0.21 × 1.10 (Slice 6d; spike/diagnostic parity)
-    OverallIntensity = 0.495,     -- v3.3.12 0.45 × 1.10 (Slice 6d)
-    DirectionalBalance = 0.08,
-    NightBrightness = 0.22,       -- v3.3.12 0.20 × 1.10 (Slice 6d)
-    SunAngle = 100.0,
-}
-local G1R_DIRECT_INDOOR_DAY_WRITES = {
-    { name = "Sun Light Intensity", target = 0.154 },             -- v3.3.12 0.14 × 1.10 (Slice 6d)
-    { name = "Sun Light Intensity Multiplier in Interiors", target = 0.11 },
-    { name = "Directional Lighting Intensity", target = 0.99 },
-    -- Exposure Bias in Interior: not written — respect G1R Extra Interior Exposure slider.
-}
--- Game-night indoor: clear day crush; brighten via skylight/moon (not exposure).
-local G1R_NIGHT_INDOOR_BRIGHTNESS_WRITES = {
-    { name = "Sky Light Intensity Multiplier in Interiors", target = G1R_NIGHT_INTERIOR_SKYLIGHT_MULT },
-    { name = "Moon Light Intensity Multiplier in Interiors", target = G1R_NIGHT_INTERIOR_MOON_MULT },
-}
--- Legacy names (F11 spike / docs).
-local G1R_SETTINGS_NIGHT_PROFILE = G1R_SETTINGS_INDOOR_DAY_PROFILE
-local G1R_DIRECT_NIGHT_WRITES = G1R_DIRECT_INDOOR_DAY_WRITES
 -- F12: restore day baseline after spike (reload also works).
 local G1R_LEVER_RESET_ENABLED = true
 local G1R_LEVER_RESET_KEY     = Key.F12
@@ -275,6 +256,7 @@ local PLAYER_CONTROLLER_CLASS_NAMES = {
 }
 
 local PLAYER_PAWN_CLASS_NAMES = {
+    "PlayerCharacterBP_C",
     "GothicPlayerCharacter",
 }
 
@@ -299,10 +281,14 @@ local INDOOR_DETECTION_FLOAT_FIELDS = {
 local INDOOR_DETECTION_RECENT_MAX_AGE_SEC = 5.0
 
 -- ---- state -----------------------------------------------------------------
-local modEnabled = ENABLED
+local modEnabled = CONFIG.ENABLED
 local udsCache = nil
+local udsCacheAddr = nil
 local gothicControllerCache = nil
+local gothicControllerCacheAddr = nil
 local playerControllerCache = nil
+local playerControllerCacheAddr = nil
+local lastPawnAddr = nil
 local snapshotCount = 0
 local lastAppliedMode = nil   -- nil | "outdoor" | "indoor_day" | "indoor_night"
 local lastStableUnderRoof = nil -- confirmed IsUnderRoof after Gate Stability (or bootstrap)
@@ -314,12 +300,13 @@ local gatePendingCheckpointPolls = nil
 local gatePendingPolls = 0
 local gateCheckpointIndex = 0
 local gateUnavailablePolls = 0
-local gateUnavailableLogged = false
 local pollEnabled = false       -- true only after ClientRestart (in-game pawn)
 local ingameWarmupPolls = 0
+local stableReadyPolls = 0
 local udsNotReadyLogged = false
-local indoorNightRefreshPolls = 0
-local indoorNightProbePolls = 0
+local indoorNightPolls = 0
+local lastClientRestartClock = 0
+local rapidRestartWarmup = 0  -- 0=off, 1=rapid ClientRestart extra warmup, 2=mounted (suspend poll)
 local skyTransitionActive = false
 local skyTransitionPhase = nil    -- nil | "enter" | "revert"
 local skyTransitionPolls = 0
@@ -335,13 +322,46 @@ local function log(msg)
     if DEBUG then print("[G1R_IndoorNight] " .. msg) end
 end
 
-local function safeObj(obj)
-    if obj == nil then return false end
+local function objAddress(obj)
+    if obj == nil then return nil end
     local ok, addr = pcall(function()
         if not obj:IsValid() then return nil end
         return obj:GetAddress()
     end)
-    return ok and addr ~= nil and addr ~= 0
+    if ok and addr ~= nil and addr ~= 0 then return addr end
+end
+
+local function safeObj(obj)
+    return objAddress(obj) ~= nil
+end
+
+local function cacheAlive(obj, trackedAddr)
+    if obj == nil or trackedAddr == nil then return false end
+    local addr = objAddress(obj)
+    return addr ~= nil and addr == trackedAddr
+end
+
+local function invalidateObjectCaches()
+    udsCache = nil
+    udsCacheAddr = nil
+    gothicControllerCache = nil
+    gothicControllerCacheAddr = nil
+    playerControllerCache = nil
+    playerControllerCacheAddr = nil
+    lastPawnAddr = nil
+    udsNotReadyLogged = false
+end
+
+local function notePawnReload(pawn)
+    local addr = objAddress(pawn)
+    if not addr then return end
+    if lastPawnAddr ~= nil and addr ~= lastPawnAddr then
+        invalidateObjectCaches()
+        ingameWarmupPolls = 0
+        stableReadyPolls = 0
+        log("pawn address changed — object caches cleared")
+    end
+    lastPawnAddr = addr
 end
 
 local function readField(obj, name)
@@ -445,11 +465,14 @@ end
 
 -- ---- UDS discovery ---------------------------------------------------------
 local function findUds()
-    if safeObj(udsCache) then return udsCache end
+    if cacheAlive(udsCache, udsCacheAddr) then return udsCache end
+    udsCache = nil
+    udsCacheAddr = nil
     for _, className in ipairs(UDS_CLASS_NAMES) do
         local ok, obj = pcall(FindFirstOf, className)
         if ok and safeObj(obj) then
             udsCache = obj
+            udsCacheAddr = objAddress(obj)
             log("found UDS: " .. className)
             return obj
         end
@@ -460,6 +483,7 @@ local function findUds()
             for _, obj in pairs(list) do
                 if safeObj(obj) then
                     udsCache = obj
+                    udsCacheAddr = objAddress(obj)
                     log("found UDS via FindAllOf: " .. className)
                     return obj
                 end
@@ -469,11 +493,14 @@ local function findUds()
 end
 
 local function findGothicController()
-    if safeObj(gothicControllerCache) then return gothicControllerCache end
+    if cacheAlive(gothicControllerCache, gothicControllerCacheAddr) then return gothicControllerCache end
+    gothicControllerCache = nil
+    gothicControllerCacheAddr = nil
     for _, className in ipairs(GOTHIC_CONTROLLER_CLASS_NAMES) do
         local ok, obj = pcall(FindFirstOf, className)
         if ok and safeObj(obj) then
             gothicControllerCache = obj
+            gothicControllerCacheAddr = objAddress(obj)
             log("found gothic controller: " .. className)
             return obj
         end
@@ -484,6 +511,7 @@ local function findGothicController()
             for _, obj in pairs(list) do
                 if safeObj(obj) then
                     gothicControllerCache = obj
+                    gothicControllerCacheAddr = objAddress(obj)
                     log("found gothic controller via FindAllOf: " .. className)
                     return obj
                 end
@@ -576,6 +604,9 @@ local function appendGothicControllerPath(lines, uds)
 end
 
 local function applySettingsProfile(uds, profile)
+    if not cacheAlive(uds, udsCacheAddr) then
+        return false, nil, nil, "uds stale"
+    end
     local settings = readSettingsStruct(uds)
     if not settings then
         return false, nil, nil, "GetSettings unavailable"
@@ -597,7 +628,8 @@ local function applySettingsProfile(uds, profile)
 end
 
 local function writeNumericField(obj, name, value)
-    if not obj or name == nil or value == nil then return false end
+    if not safeObj(obj) or name == nil or value == nil then return false end
+    if obj == udsCache and not cacheAlive(obj, udsCacheAddr) then return false end
     local ok = pcall(function() obj[name] = value end)
     return ok
 end
@@ -620,21 +652,36 @@ end
 
 local function applyIndoorSkylightHue(uds)
     if not uds then return false end
-    local color = G1R_INDOOR_SKYLIGHT_COLOR
+    local br = require("indoornight_brightness")
+    local color = br.indoorSkylightColor()
     writeLinearColorField(uds, "Interior Sky Light Color", color.R, color.G, color.B, color.A)
-    applySettingsProfile(uds, G1R_SETTINGS_INDOOR_NIGHT_SKYLIGHT_HUE)
+    applySettingsProfile(uds, br.nightSkylightHueProfile())
     return true
 end
 
 -- Slice 2b helpers (after isObjectValue / followObjectLink above).
 local function findPlayerController()
-    if safeObj(playerControllerCache) then return playerControllerCache end
+    if cacheAlive(playerControllerCache, playerControllerCacheAddr) then
+        local pawn = select(1, readField(playerControllerCache, "Pawn"))
+        if safeObj(pawn) then
+            return playerControllerCache
+        end
+        playerControllerCache = nil
+        playerControllerCacheAddr = nil
+    else
+        playerControllerCache = nil
+        playerControllerCacheAddr = nil
+    end
     for _, className in ipairs(PLAYER_CONTROLLER_CLASS_NAMES) do
         local ok, obj = pcall(FindFirstOf, className)
         if ok and safeObj(obj) then
-            playerControllerCache = obj
-            log("found player controller: " .. className)
-            return obj
+            local pawn = select(1, readField(obj, "Pawn"))
+            if safeObj(pawn) then
+                playerControllerCache = obj
+                playerControllerCacheAddr = objAddress(obj)
+                log("found player controller: " .. className)
+                return obj
+            end
         end
     end
     for _, className in ipairs(PLAYER_CONTROLLER_CLASS_NAMES) do
@@ -642,9 +689,13 @@ local function findPlayerController()
         if list then
             for _, obj in pairs(list) do
                 if safeObj(obj) then
-                    playerControllerCache = obj
-                    log("found player controller via FindAllOf: " .. className)
-                    return obj
+                    local pawn = select(1, readField(obj, "Pawn"))
+                    if safeObj(pawn) then
+                        playerControllerCache = obj
+                        playerControllerCacheAddr = objAddress(obj)
+                        log("found player controller via FindAllOf: " .. className)
+                        return obj
+                    end
                 end
             end
         end
@@ -652,20 +703,31 @@ local function findPlayerController()
 end
 
 local function findPlayerPawn(controller)
+    local function pawnIsPlayerCharacter(pawn)
+        if not safeObj(pawn) then return false end
+        local short = actorClassName(pawn)
+        local lower = string.lower(short)
+        if string.find(lower, "playercharacter", 1, true) then return true end
+        if string.find(lower, "gothicplayer", 1, true) then return true end
+        if string.find(lower, "rideable", 1, true) then return false end
+        if string.find(lower, "scavenger", 1, true) then return false end
+        if string.find(lower, "creature", 1, true) then return false end
+        return false
+    end
+
     if safeObj(controller) then
+        for _, name in ipairs({ "Character", "AcknowledgedPawn", "Pawn" }) do
+            local v, t = readField(controller, name)
+            if isObjectValue(v, t) and pawnIsPlayerCharacter(v) then
+                return v, name
+            end
+        end
         local ok, pawn = pcall(function()
             if controller.K2_GetPawn then
                 return controller:K2_GetPawn()
             end
         end)
-        if ok and safeObj(pawn) then return pawn, "K2_GetPawn()" end
-
-        for _, name in ipairs({ "Pawn", "Character", "AcknowledgedPawn" }) do
-            local v, t = readField(controller, name)
-            if isObjectValue(v, t) then
-                return v, name
-            end
-        end
+        if ok and pawnIsPlayerCharacter(pawn) then return pawn, "K2_GetPawn()" end
     end
     for _, className in ipairs(PLAYER_PAWN_CLASS_NAMES) do
         local ok, obj = pcall(FindFirstOf, className)
@@ -1134,8 +1196,15 @@ local function spikeWriteLine(lines, label, before, target, after, writeOk)
 end
 
 local function udsReadyForWrites(uds)
-    if not safeObj(uds) then return false end
+    if not cacheAlive(uds, udsCacheAddr) then return false end
     return readSettingsStruct(uds) ~= nil
+end
+
+local function runtimeReadyForSkyWrites(uds, controller, pawn)
+    return cacheAlive(uds, udsCacheAddr)
+        and udsReadyForWrites(uds)
+        and cacheAlive(controller, playerControllerCacheAddr)
+        and safeObj(pawn)
 end
 
 local function nightStateReverted(uds)
@@ -1208,24 +1277,26 @@ local function applyNightIndoorClear(uds)
 end
 
 local function applyIndoorNightParity(uds)
+    local br = require("indoornight_brightness")
     applyNightIndoorClear(uds)
-    for _, entry in ipairs(G1R_NIGHT_INDOOR_BRIGHTNESS_WRITES) do
+    for _, entry in ipairs(br.nightBrightnessWrites()) do
         writeNumericField(uds, entry.name, entry.target)
     end
     applyIndoorSkylightHue(uds)
 end
 
 local function applyIndoorProfile(uds, gameNight)
-    if not uds then return false end
+    if not cacheAlive(uds, udsCacheAddr) then return false end
+    local br = require("indoornight_brightness")
     if gameNight then
         applyIndoorNightParity(uds)
     else
         pcall(function() uds["Apply Interior Adjustments"] = true end)
         for _, name in ipairs(G1R_SKY_MULTIPLIER_FIELDS) do
-            writeNumericField(uds, name, G1R_SKY_MULTIPLIER_TARGET)
+            writeNumericField(uds, name, br.daySkyMultiplier())
         end
-        applySettingsProfile(uds, G1R_SETTINGS_INDOOR_DAY_PROFILE)
-        for _, entry in ipairs(G1R_DIRECT_INDOOR_DAY_WRITES) do
+        applySettingsProfile(uds, br.daySettingsProfile())
+        for _, entry in ipairs(br.dayDirectWrites()) do
             writeNumericField(uds, entry.name, entry.target)
         end
         -- Day: no hue writes (temperature/contrast/saturation/color)
@@ -1269,8 +1340,8 @@ local function getLeverDirectFieldNames()
         end
     end
     add(G1R_DAY_RESTORE_WRITES)
-    add(G1R_DIRECT_INDOOR_DAY_WRITES)
-    add(G1R_NIGHT_INDOOR_BRIGHTNESS_WRITES)
+    add(require("indoornight_brightness").dayDirectWrites())
+    add(require("indoornight_brightness").nightBrightnessWrites())
     leverDirectFieldNames = names
     return names
 end
@@ -1319,7 +1390,7 @@ end
 
 local function buildTargetLeverSnapshot(mode, gameNight)
     local snap = {}
-    local skipExposure = mode ~= "outdoor"
+    local br = require("indoornight_brightness")
     if mode == "outdoor" then
         snap["Apply Interior Adjustments"] = 0
         addSettingsTargets(snap, G1R_DAY_RESTORE_PROFILE)
@@ -1334,20 +1405,21 @@ local function buildTargetLeverSnapshot(mode, gameNight)
         for _, name in ipairs(G1R_SKY_MULTIPLIER_FIELDS) do
             snap[name] = 1.0
         end
-        addDirectTargets(snap, G1R_NIGHT_INDOOR_BRIGHTNESS_WRITES, false)
-        addSettingsTargets(snap, G1R_SETTINGS_INDOOR_NIGHT_SKYLIGHT_HUE)
+        addDirectTargets(snap, br.nightBrightnessWrites(), false)
+        addSettingsTargets(snap, br.nightSkylightHueProfile())
     else
         snap["Apply Interior Adjustments"] = 1
         for _, name in ipairs(G1R_SKY_MULTIPLIER_FIELDS) do
-            snap[name] = G1R_SKY_MULTIPLIER_TARGET
+            snap[name] = br.daySkyMultiplier()
         end
-        addSettingsTargets(snap, G1R_SETTINGS_INDOOR_DAY_PROFILE)
-        addDirectTargets(snap, G1R_DIRECT_INDOOR_DAY_WRITES, false)
+        addSettingsTargets(snap, br.daySettingsProfile())
+        addDirectTargets(snap, br.dayDirectWrites(), false)
     end
     return snap
 end
 
 local function applyBlendedLeverSnapshot(uds, startSnap, endSnap, t, skipExposure)
+    if not cacheAlive(uds, udsCacheAddr) then return end
     local settingsProfile = {}
     local seen = {}
     for key in pairs(endSnap) do seen[key] = true end
@@ -1420,8 +1492,7 @@ local function startSkyTransition(uds, underRoof, mode, gameNight)
     skyTransitionSkipExposure = mode ~= "outdoor"
     skyTransitionStartSnap = captureLeverSnapshot(uds)
     skyTransitionEndSnap = buildTargetLeverSnapshot(mode, gameNight)
-    indoorNightRefreshPolls = 0
-    indoorNightProbePolls = 0
+    indoorNightPolls = 0
     print(string.format(
         "[G1R_IndoorNight] sky transition enter -> %s (%.1fs linear) build=%s",
         mode,
@@ -1721,7 +1792,7 @@ local function buildDiscoverySnapshot()
     lines[#lines + 1] = ""
     do
         local names = {}
-        for _, entry in ipairs(G1R_DIRECT_NIGHT_WRITES) do
+        for _, entry in ipairs(require("indoornight_brightness").dayDirectWrites()) do
             names[#names + 1] = entry.name
         end
         appendCandidateGroup(lines, "g1r direct night lever candidates", uds, names)
@@ -1811,7 +1882,7 @@ local function startGatePending(underRoof)
     gatePendingUnderRoof = underRoof
     gatePendingPolls = 0
     gateCheckpointIndex = 0
-    -- Bias toward light: leaving stable indoor confirms outdoor in 1s; entering indoor keeps 3s.
+    -- Bias toward light: leaving stable indoor confirms outdoor in 0.5s; entering indoor keeps 3s.
     gatePendingCheckpointPolls = lastStableUnderRoof
         and GATE_STABILITY_EXIT_INDOOR_POLLS
         or GATE_STABILITY_ENTER_INDOOR_POLLS
@@ -1972,24 +2043,47 @@ local function pass()
     if not modEnabled then return end
     if not pollEnabled then return end
 
+    if rapidRestartWarmup == 2 then return end
+
     ingameWarmupPolls = ingameWarmupPolls + 1
-    if ingameWarmupPolls < INGAME_WARMUP_POLLS then return end
+    local warmupTarget = INGAME_WARMUP_POLLS + ((rapidRestartWarmup == 1) and 50 or 0)
+    if ingameWarmupPolls < warmupTarget then return end
 
     local uds = findUds()
-    if not udsReadyForWrites(uds) then
+    local controller = findPlayerController()
+    if controller then
+        local mountPawn = select(1, readField(controller, "Pawn"))
+        if safeObj(mountPawn) then
+            local lower = string.lower(actorClassName(mountPawn))
+            if string.find(lower, "rideable", 1, true) or string.find(lower, "scavenger", 1, true) then
+                rapidRestartWarmup = 2
+                return
+            end
+        end
+    end
+    local pawn = controller and findPlayerPawn(controller) or nil
+
+    if not runtimeReadyForSkyWrites(uds, controller, pawn) then
+        stableReadyPolls = 0
         if not udsNotReadyLogged then
             udsNotReadyLogged = true
-            print("[G1R_IndoorNight] UDS GetSettings not ready — waiting")
+            print("[G1R_IndoorNight] runtime not ready after load — waiting")
         end
         return
     end
+
+    stableReadyPolls = stableReadyPolls + 1
+    if stableReadyPolls < STABLE_READY_POLLS then return end
+    if rapidRestartWarmup == 1 then rapidRestartWarmup = 0 end
     udsNotReadyLogged = false
 
-    local controller = findPlayerController()
-    if not controller then return end
+    notePawnReload(pawn)
 
-    local pawn = findPlayerPawn(controller)
-    if not pawn then return end
+    if not cacheAlive(uds, udsCacheAddr) then
+        invalidateObjectCaches()
+        stableReadyPolls = 0
+        return
+    end
 
     local underRoof = tryIsUnderRoof(pawn)
     local tod = readTimeOfDay(uds)
@@ -2000,8 +2094,8 @@ local function pass()
         local tickUnderRoof = skyTransitionPhase == "revert" and lastStableUnderRoof
             or skyTransitionTargetUnderRoof
         if underRoof == nil then
-            if not gateUnavailableLogged then
-                gateUnavailableLogged = true
+            gateUnavailablePolls = gateUnavailablePolls + 1
+            if gateUnavailablePolls == 1 then
                 print("[G1R_IndoorNight] IsUnderRoof unavailable during sky transition — holding blend")
             end
             gateUnavailablePolls = gateUnavailablePolls + 1
@@ -2011,7 +2105,6 @@ local function pass()
                 tickSkyTransition(uds, tickUnderRoof, tod)
             end
         else
-            gateUnavailableLogged = false
             gateUnavailablePolls = 0
             tickSkyTransition(uds, underRoof, tod)
             if gateStabilityPhase == "pending" and skyTransitionPhase == "enter" then
@@ -2022,8 +2115,8 @@ local function pass()
     end
 
     if underRoof == nil then
-        if not gateUnavailableLogged then
-            gateUnavailableLogged = true
+        gateUnavailablePolls = gateUnavailablePolls + 1
+        if gateUnavailablePolls == 1 then
             print("[G1R_IndoorNight] IsUnderRoof unavailable; holding current sky state")
         end
         if gateStabilityPhase == "pending" then
@@ -2035,7 +2128,6 @@ local function pass()
         end
         return
     end
-    gateUnavailableLogged = false
     gateUnavailablePolls = 0
 
     if lastStableUnderRoof == nil then
@@ -2078,16 +2170,13 @@ local function pass()
     local modeChanged = mode ~= lastAppliedMode
 
     if mode == "indoor_night" then
-        indoorNightRefreshPolls = indoorNightRefreshPolls + 1
-        indoorNightProbePolls = indoorNightProbePolls + 1
-        if modeChanged or indoorNightRefreshPolls >= INDOOR_NIGHT_REFRESH_POLLS then
+        indoorNightPolls = indoorNightPolls + 1
+        if modeChanged or indoorNightPolls >= INDOOR_NIGHT_REFRESH_POLLS then
             applyIndoorProfile(uds, true)
             announceApply(mode, tod, uds)
             commitLastStableProfile("indoor_night", true, true)
-            indoorNightRefreshPolls = 0
-            indoorNightProbePolls = 0
-        elseif indoorNightProbePolls >= INDOOR_NIGHT_PROBE_POLLS then
-            indoorNightProbePolls = 0
+            indoorNightPolls = 0
+        elseif indoorNightPolls % INDOOR_NIGHT_PROBE_POLLS == 0 then
             local reverted = nightStateReverted(uds)
             if reverted then
                 logNightReadback(uds, "probe between refresh", true)
@@ -2097,8 +2186,7 @@ local function pass()
         return
     end
 
-    indoorNightRefreshPolls = 0
-    indoorNightProbePolls = 0
+    indoorNightPolls = 0
     if modeChanged then
         applyIndoorProfile(uds, false)
         announceApply(mode, tod, uds)
@@ -2125,12 +2213,6 @@ local function setModEnabled(next)
     print(string.format("[G1R_IndoorNight] %s", modEnabled and "ENABLED" or "DISABLED"))
 end
 
-local function reportPcallError(label, ok, err)
-    if not ok then
-        print(string.format("[G1R_IndoorNight] %s error: %s", label, tostring(err)))
-    end
-end
-
 -- ---- bootstrap -------------------------------------------------------------
 if DISCOVERY_MODE then
     local spikeParts = {}
@@ -2141,8 +2223,11 @@ if DISCOVERY_MODE then
     print("[G1R_IndoorNight] loaded — DISCOVERY MODE (F8 = snapshot (Slice 2b inside detection)" .. spikeHint .. "; output -> snapshots.log + UE4SS.log)")
 else
     print(string.format(
-        "[G1R_IndoorNight] loaded — Slice 6c %s (F7 toggle; IsUnderRoof gate + 3s stability + %.1fs enter / %.1fs revert; poll %dms)",
+        "[G1R_IndoorNight] loaded — Slice 6c %s (F7 toggle; config.lua%s; %.0fs enter gate / %.1fs exit gate + %.1fs sky enter / %.1fs revert; poll %dms)",
         MOD_BUILD,
+        CONFIG.SHADOWS_ON_PROFILE and "; SHADOWS_ON_PROFILE" or "",
+        CONFIG.ENTER_GATE_SEC,
+        CONFIG.EXIT_GATE_SEC,
         TRANSITION_ENTER_MS / 1000,
         TRANSITION_REVERT_MS / 1000,
         PASS_MS
@@ -2153,14 +2238,14 @@ if DISCOVERY_MODE then
     RegisterKeyBind(SNAPSHOT_KEY, function()
         ExecuteInGameThread(function()
             print("[G1R_IndoorNight] F8 snapshot requested...")
-            reportPcallError("F8 snapshot", pcall(discoverySnapshot))
+            do local ok, err = pcall(discoverySnapshot); if not ok then print("[G1R_IndoorNight] F8 snapshot error: " .. tostring(err)) end end
         end)
     end)
 
     if TOD_SPIKE_ENABLED then
         RegisterKeyBind(TOD_SPIKE_KEY, function()
             ExecuteInGameThread(function()
-                reportPcallError("F10 TOD spike", pcall(runTodSpike))
+                do local ok, err = pcall(runTodSpike); if not ok then print("[G1R_IndoorNight] F10 TOD spike error: " .. tostring(err)) end end
             end)
         end)
     end
@@ -2168,7 +2253,7 @@ if DISCOVERY_MODE then
     if G1R_LEVER_SPIKE_ENABLED then
         RegisterKeyBind(G1R_LEVER_SPIKE_KEY, function()
             ExecuteInGameThread(function()
-                reportPcallError("F11 G1R lever spike", pcall(runG1rLeverSpike))
+                do local ok, err = pcall(runG1rLeverSpike); if not ok then print("[G1R_IndoorNight] F11 G1R lever spike error: " .. tostring(err)) end end
             end)
         end)
     end
@@ -2176,19 +2261,19 @@ if DISCOVERY_MODE then
     if G1R_LEVER_RESET_ENABLED then
         RegisterKeyBind(G1R_LEVER_RESET_KEY, function()
             ExecuteInGameThread(function()
-                reportPcallError("F12 day restore", pcall(runG1rLeverReset))
+                do local ok, err = pcall(runG1rLeverReset); if not ok then print("[G1R_IndoorNight] F12 day restore error: " .. tostring(err)) end end
             end)
         end)
     end
 end
 
-RegisterKeyBind(TOGGLE_KEY, function()
+RegisterKeyBind(CONFIG.TOGGLE_KEY, function()
     ExecuteInGameThread(function()
         setModEnabled(not modEnabled)
     end)
 end)
 
-RegisterLoadMapPostHook(function(Engine, World)
+local function resetSkyStateForReload()
     lastAppliedMode = nil
     lastStableUnderRoof = nil
     lastStableMode = nil
@@ -2196,26 +2281,78 @@ RegisterLoadMapPostHook(function(Engine, World)
     resetGateStability()
     resetSkyTransition()
     ingameWarmupPolls = 0
-    indoorNightRefreshPolls = 0
-    indoorNightProbePolls = 0
+    stableReadyPolls = 0
+    indoorNightPolls = 0
+end
+
+local function onWorldReload(reason)
+    pollEnabled = false
+    invalidateObjectCaches()
+    resetSkyStateForReload()
+    log("world reload (" .. reason .. ") — poll paused, caches cleared")
+end
+
+pcall(RegisterLoadMapPreHook, function(Engine, World)
+    onWorldReload("LoadMapPre")
+end)
+
+require("indoornight_reload").bind({
+    findUds = findUds,
+    applyDayRestore = applyDayRestore,
+    buildTargetLeverSnapshot = buildTargetLeverSnapshot,
+    safeObj = safeObj,
+    MOD_BUILD = MOD_BUILD,
+    setOutdoorBaseline = function()
+        lastStableUnderRoof = false
+        lastStableMode = "outdoor"
+        lastAppliedMode = "outdoor"
+        lastStableLeverSnapshot = buildTargetLeverSnapshot("outdoor", false)
+    end,
+})
+
+RegisterLoadMapPostHook(function(Engine, World)
+    onWorldReload("LoadMapPost")
+    require("indoornight_reload").scheduleRestore()
 end)
 
 RegisterHook("/Script/Engine.PlayerController:ClientRestart", function(self, NewPawn)
-    pollEnabled = true
-    ingameWarmupPolls = 0
-    lastAppliedMode = nil
-    lastStableUnderRoof = nil
-    lastStableMode = nil
-    lastStableLeverSnapshot = nil
-    resetGateStability()
-    resetSkyTransition()
-    print("[G1R_IndoorNight] in-game (ClientRestart) — poll armed after warmup")
+    ExecuteInGameThread(function()
+        local function isMountPawn(pawn)
+            if not safeObj(pawn) then return false end
+            local lower = string.lower(actorClassName(pawn))
+            return string.find(lower, "rideable", 1, true) ~= nil
+                or string.find(lower, "scavenger", 1, true) ~= nil
+        end
+        local wasMounted = (rapidRestartWarmup == 2)
+        if isMountPawn(NewPawn) then
+            rapidRestartWarmup = 2
+            print("[G1R_IndoorNight] mount — sky poll suspended (ClientRestart ignored) build=" .. MOD_BUILD)
+            return
+        end
+        if wasMounted then
+            rapidRestartWarmup = 0
+            print("[G1R_IndoorNight] dismount — resuming sky poll build=" .. MOD_BUILD)
+            return
+        end
+        local now = os.clock()
+        local rapid = (lastClientRestartClock > 0) and ((now - lastClientRestartClock) < 20)
+        lastClientRestartClock = now
+        rapidRestartWarmup = rapid and 1 or 0
+        onWorldReload("ClientRestart")
+        pollEnabled = true
+        require("indoornight_reload").scheduleRestore()
+        if rapid then
+            print("[G1R_IndoorNight] in-game (ClientRestart rapid) — extended warmup build=" .. MOD_BUILD)
+        else
+            print("[G1R_IndoorNight] in-game (ClientRestart) — poll armed after warmup build=" .. MOD_BUILD)
+        end
+    end)
 end)
 
 if not DISCOVERY_MODE then
     LoopAsync(PASS_MS, function()
         ExecuteInGameThread(function()
-            reportPcallError("poll pass", pcall(pass))
+            do local ok, err = pcall(pass); if not ok then print("[G1R_IndoorNight] poll pass error: " .. tostring(err)) end end
         end)
         return false
     end)

@@ -1,0 +1,31 @@
+;===========================================================
+; Gothic 1 Remake - CrossOver / macOS Engine Tweaks
+; Profile: STREAMING ONLY — texture pool + async load; no lighting/perf hacks
+; Switch: switch-g1r-profile.sh streaming-only
+;===========================================================
+
+[/Script/Engine.RendererSettings]
+r.Streaming.UseFixedPoolSize=True
+r.Streaming.PoolSize=6144
+
+[SystemSettings]
+; ---------- Texture streaming (G1R Streaming Stutter Fix: 12GB / 6144 MB pool) ----------
+r.TextureStreaming=1
+r.Streaming.UseFixedPoolSize=1
+r.Streaming.PoolSize=6144
+r.Streaming.LimitPoolSizeToVRAM=0
+r.Streaming.MaxTempMemoryAllowed=512
+r.Streaming.DefragDynamicBounds=1
+r.Streaming.FramesForFullUpdate=30
+r.Streaming.UseBackgroundThreadPool=1
+
+; ---------- Async loading (smoother streaming) ----------
+s.AsyncLoadingThreadEnabled=1
+s.AsyncLoadingTimeLimit=5
+s.PriorityAsyncLoadingExtraTime=15
+s.LevelStreamingActorsUpdateTimeLimit=5
+s.PriorityLevelStreamingActorsUpdateExtraTime=15
+
+[/Script/Engine.StreamingSettings]
+s.AsyncLoadingThreadEnabled=1
+s.IoDispatcherCacheSizeMB=384

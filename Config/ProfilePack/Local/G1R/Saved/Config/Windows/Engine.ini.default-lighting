@@ -1,0 +1,88 @@
+;===========================================================
+; Gothic 1 Remake - CrossOver / macOS Engine Tweaks (perf-default)
+; Profile: PERF + DEFAULT LIGHTING + darker cave interiors
+; Switch: switch-g1r-profile.sh default-lighting
+;===========================================================
+
+[/Script/Engine.RendererSettings]
+r.Streaming.UseFixedPoolSize=True
+r.Streaming.PoolSize=6144
+r.ShaderPipelineCache.Enabled=1
+
+[SystemSettings]
+; ---------- Interior darkness: big caves / mines (Lumen + shadows stay ON) ----------
+; Skylight leaking = fake outdoor ambient deep inside sealed caves (angle-dependent).
+r.Lumen.SkylightLeaking=0
+r.Lumen.SkylightLeaking.Roughness=1.0
+
+; Auto-exposure: darker + slower adaptation — cave mouths won't lift distant floor brightness.
+r.DefaultFeature.AutoExposure=1
+r.DefaultFeature.AutoExposure.Bias=-0.75
+r.EyeAdaptation.ExponentialTransitionDistance=10
+r.EyeAdaptation.LensAttenuation=0.38
+
+; Directional shadow reach — extended cascades; sun shadows occlude deeper into caves.
+r.Shadow.DistanceScale=2.0
+r.Shadow.CSM.TransitionScale=1.5
+r.Shadow.CSM.MaxCascades=4
+
+; ---------- Local lights: cull distant torches/campfires (prevents cave bleed) ----------
+; High draw distance = light visible far away before VSM shadows catch up. Player torch
+; stays fine — it's always near the camera. Boost nearby brightness via local exposure.
+r.LightMaxDrawDistanceScale=0.70
+
+; Local exposure: make your torch flame pop in dark caves without extending world light range.
+r.LocalExposure=1
+r.DefaultFeature.LocalExposure.HighlightContrastScale=1.25
+
+; ---------- Texture streaming (G1R Streaming Stutter Fix: 12GB / 6144 MB pool) ----------
+r.TextureStreaming=1
+r.Streaming.UseFixedPoolSize=1
+r.Streaming.PoolSize=6144
+r.Streaming.LimitPoolSizeToVRAM=0
+r.Streaming.MaxTempMemoryAllowed=512
+r.Streaming.DefragDynamicBounds=1
+r.Streaming.FramesForFullUpdate=30
+r.Streaming.UseBackgroundThreadPool=1
+r.MotionBlurQuality=0
+
+; ---------- Frame pacing: VSync off, hard cap 58 ----------
+t.MaxFPS=58
+rhi.SyncInterval=0
+
+; ---------- Open vista: cull distant geometry + foliage ----------
+r.ViewDistanceScale=0.45
+grass.Enable=0
+foliage.DensityScale=0
+foliage.LODDistanceScale=0.50
+foliage.MinimumScreenSize=0.001
+
+; ---------- PSO / shader cache (runtime only, not lighting quality) ----------
+r.PSOPrecaching=1
+r.ShaderPipelineCache.Enabled=1
+r.ShaderPipelineCache.StartupMode=2
+r.ShaderPipelineCache.BatchSize=64
+r.ShaderPipelineCache.BackgroundBatchSize=8
+r.ShaderPipelineCache.BatchTime=2
+r.ShaderPipelineCache.BackgroundBatchTime=1
+r.ShaderPipelineCache.LazyLoadShadersWhenPSOCacheIsPresent=0
+r.ShaderPipelineCache.GameFileMaskEnabled=0
+
+; ---------- D3DMetal stability ----------
+r.HZBOcclusion=0
+r.OneFrameThreadLag=1
+r.FinishCurrentFrame=0
+
+; ---------- Async loading (smoother streaming) ----------
+s.AsyncLoadingThreadEnabled=1
+s.AsyncLoadingTimeLimit=5
+s.PriorityAsyncLoadingExtraTime=15
+s.LevelStreamingActorsUpdateTimeLimit=5
+s.PriorityLevelStreamingActorsUpdateExtraTime=15
+
+[/Script/Engine.StreamingSettings]
+s.AsyncLoadingThreadEnabled=1
+s.IoDispatcherCacheSizeMB=384
+
+[/Script/Engine.GarbageCollectionSettings]
+gc.TimeBetweenPurgingPendingKillObjects=30.0

@@ -48,6 +48,10 @@ Set `DISCOVERY_MODE = true` to re-enable read-only F8 snapshots and F10/F11/F12 
 
 Edit `Scripts/main.lua` — CONFIG block at top. No rebuild; save and relaunch (or UE4SS hot-reload if enabled).
 
+### Engine profiles (CrossOver / max-perf)
+
+Optional `Engine.ini` + `GameUserSettings.ini` profile pack with switcher: [Config/ProfilePack/](Config/ProfilePack/). Profiles: `maxperf` (default fallback), `streaming-veryhigh` (M1 Max+ opt-in), `streaming-veryhigh-extshadows` (extended CSM + mod `SHADOWS_ON_PROFILE` for caves), `streaming-crossover` (CrossOver A/B), `streaming-only` (native GPU quality test — not for CrossOver). See [Config/ProfilePack/TEST.md](Config/ProfilePack/TEST.md).
+
 | Setting | Default | Meaning |
 |---------|---------|---------|
 | `ENABLED` | `true` | Start with mod active |
