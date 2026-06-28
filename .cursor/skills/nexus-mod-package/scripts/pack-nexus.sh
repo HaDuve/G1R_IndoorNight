@@ -37,6 +37,23 @@ CFG_SRC="$REPO/Config/ProfilePack/Local/G1R/Saved/Config/Windows"
 CFG_DST="$PACK/Config_MaxPerf/Local/G1R/Saved/Config/Windows"
 SCR_DST="$PACK/G1R_IndoorNight/Scripts"
 LUA=(main.lua config.lua indoornight_brightness.lua indoornight_reload.lua)
+CHECK_LUA="$SCRIPT_DIR/count-lua-locals.py"
+LUA_LOCAL_LIMIT=200
+
+warn_lua_local_limit() {
+  local f lua_paths=()
+  for f in "${LUA[@]}"; do
+    lua_paths+=("$REPO/Scripts/$f")
+  done
+  if [[ ! -f "$CHECK_LUA" ]]; then
+    echo "WARNING: missing $CHECK_LUA — skipping Lua local limit check" >&2
+    return 0
+  fi
+  if ! python3 "$CHECK_LUA" "${lua_paths[@]}"; then
+    echo "WARNING: one or more Lua files exceed the ${LUA_LOCAL_LIMIT} local variable limit (see above)" >&2
+    return 1
+  fi
+}
 
 copy_lua() {
   local dest="$1"
@@ -59,14 +76,18 @@ mkdir -p "$UPLOADS"
 
 case "$MODE" in
   full)
+    warn_lua_local_limit || true
     copy_config "$CFG_DST"
     copy_lua "$SCR_DST"
+    find "$PACK" -name .DS_Store -delete
     cd "$UPLOADS"
-    zip -r G1R_IndoorNight_NexusPack.zip G1R_IndoorNight_NexusPack
+    rm -f G1R_IndoorNight_NexusPack.zip
+    zip -r G1R_IndoorNight_NexusPack.zip G1R_IndoorNight_NexusPack -x "*.DS_Store" -x "**/.DS_Store"
     echo "Wrote: $UPLOADS/G1R_IndoorNight_NexusPack.zip"
     echo "Next: update $PACK/00_README_INSTALLATION.txt if needed, then re-zip README-only if changed."
     ;;
   scripts-only)
+    warn_lua_local_limit || true
     STAGE="$UPLOADS/_stage_scripts/G1R_IndoorNight/Scripts"
     rm -rf "$UPLOADS/_stage_scripts"
     copy_lua "$STAGE"
