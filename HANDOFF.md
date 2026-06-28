@@ -58,9 +58,9 @@ G1R_IndoorNight/
 
 `Scripts/main.lua` includes:
 
-- CONFIG block (`ENABLED`, `TOGGLE_KEY`, `TARGET_TOD`, `OCCLUSION_START`, `OCCLUSION_FULL`, `PASS_MS`, `DEBUG`)
+- CONFIG block (`ENABLED`, `TOGGLE_KEY`, `TARGET_TOD`, `OCCLUSION_START`, `OCCLUSION_FULL`, `DEBUG`)
 - F7 toggle with instant restore attempt via cached `trueTodCache`
-- `LoopAsync` poll every 100 ms
+- `LoopAsync` poll every 1 s (fixed `PASS_MS` in `main.lua`)
 - UDS discovery via `FindFirstOf` / `FindAllOf` with candidate class names
 - Occlusion / TOD read/write with candidate property names (unverified)
 - Blend math: linear lerp from true TOD → `TARGET_TOD` between `OCCLUSION_START` and `OCCLUSION_FULL`

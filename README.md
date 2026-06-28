@@ -38,7 +38,7 @@ G1R_IndoorNight/Scripts/main.lua
 ## Usage
 
 - **F7** — toggle mod on/off mid-session (instant day restore when off)
-- On by default at load; polls `IsUnderRoof` every `PASS_MS` and applies v3.1 indoor dimming or day baseline
+- On by default at load; polls `IsUnderRoof` every 1 s and applies v3.1 indoor dimming or day baseline
 
 ### Discovery mode (dev only)
 
@@ -59,7 +59,6 @@ Optional `Engine.ini` + `GameUserSettings.ini` profile pack with switcher: [Conf
 | `TARGET_TOD` | `2300` | UDS time-of-day at full occlusion (0–2400) |
 | `OCCLUSION_START` | `0.5` | Below this, no blend |
 | `OCCLUSION_FULL` | `1.0` | Full night-level sky contribution at max occlusion |
-| `PASS_MS` | `100` | Poll interval |
 | `DEBUG` | `false` | Log occlusion / TOD to UE4SS console |
 | `DISCOVERY_MODE` | `false` | Read-only instrumentation; disables sky writes when `true` |
 | `SNAPSHOT_KEY` | `Key.F8` | Print filtered UDS candidate snapshot |

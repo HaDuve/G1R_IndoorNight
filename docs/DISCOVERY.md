@@ -42,7 +42,7 @@
 
 ## Slice 3 — Auto Apply on `IsUnderRoof` (**v3.3.12 shipped — HITL accepted**)
 
-**Shipped:** `DISCOVERY_MODE = false`; poll `IsUnderRoof` every 100 ms; modes `indoor_day` / `indoor_night` / `outdoor`; F7 toggle + day restore.
+**Shipped:** `DISCOVERY_MODE = false`; poll `IsUnderRoof` every 1 s; modes `indoor_day` / `indoor_night` / `outdoor`; F7 toggle + day restore.
 
 **Lever policy (HITL 2026-06-14):** See **`CONTEXT.md` → Lever Boundaries**. Summary: **never write `Exposure Bias in Interior` while indoors** (player **Extra Interior Exposure** owns it). Never write raw TOD or local lights. Night brightness via `NightBrightness`, skylight/moon multipliers, `OverallIntensity` — not exposure.
 

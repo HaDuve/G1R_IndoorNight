@@ -4,7 +4,11 @@
 -- ============================================================================
 
 -- ---- internal timing + config load -----------------------------------------
-local PASS_MS           = 100       -- poll interval (ms); do not change unless you know UE4SS loop math
+local PASS_MS           = 1000      -- fixed poll interval (ms); timings below are wall-clock derived
+
+local function msToPolls(ms)
+    return math.max(1, math.ceil(ms / PASS_MS))
+end
 
 local function loadUserConfig()
     local defaults = {
@@ -29,7 +33,7 @@ local function loadUserConfig()
 end
 
 local function secToPolls(sec)
-    return math.max(1, math.floor(sec * 1000 / PASS_MS))
+    return msToPolls(sec * 1000)
 end
 
 local CONFIG = loadUserConfig()
@@ -40,9 +44,9 @@ require("indoornight_brightness").init(
 )
 
 local TRANSITION_ENTER_MS = CONFIG.TRANSITION_ENTER_SEC * 1000
-local TRANSITION_ENTER_POLLS = math.max(1, math.floor(TRANSITION_ENTER_MS / PASS_MS))
+local TRANSITION_ENTER_POLLS = msToPolls(TRANSITION_ENTER_MS)
 local TRANSITION_REVERT_MS = 1000
-local TRANSITION_REVERT_POLLS = math.max(1, math.floor(TRANSITION_REVERT_MS / PASS_MS))
+local TRANSITION_REVERT_POLLS = msToPolls(TRANSITION_REVERT_MS)
 local GATE_STABILITY_ENTER_INDOOR_POLLS = { secToPolls(CONFIG.ENTER_GATE_SEC) }
 local GATE_STABILITY_EXIT_INDOOR_POLLS  = { secToPolls(CONFIG.EXIT_GATE_SEC) }
 local GATE_STABILITY_MAX_RESET_POLLS = math.max(
@@ -55,12 +59,13 @@ local TARGET_TOD        = 2300.0    -- UDS 0–2400; ~23:00 moonlit night
 local OCCLUSION_START   = 0.5       -- below: no blend
 local OCCLUSION_FULL    = 1.0       -- at/above: full TARGET_TOD blend
 local DEBUG             = false
-local MOD_BUILD         = "v3.6.2-outdoorpoll"  -- boot banner — confirm this string in UE4SS.log after reload
-local INGAME_WARMUP_POLLS = 50      -- ~5s after ClientRestart before any sky probe
-local STABLE_READY_POLLS  = 15      -- ~1.5s consecutive ready polls before first sky write
-local INDOOR_NIGHT_REFRESH_POLLS = 20  -- re-apply game-night profile ~2s (frame-fight)
-local INDOOR_NIGHT_PROBE_POLLS = 5       -- passive readback ~500ms (detect G1R revert)
-local OUTDOOR_STABLE_POLL_INTERVAL = 5   -- when stably outside: IsUnderRoof check every ~500ms (less UE4SS churn)
+local MOD_BUILD         = "v3.6.3-1spoll"  -- boot banner — confirm this string in UE4SS.log after reload
+local INGAME_WARMUP_POLLS = msToPolls(5000)       -- after ClientRestart before any sky probe
+local RAPID_RESTART_EXTRA_WARMUP_POLLS = msToPolls(5000)
+local STABLE_READY_POLLS = msToPolls(1500)      -- consecutive ready polls before first sky write
+local INDOOR_NIGHT_REFRESH_POLLS = msToPolls(2000)  -- re-apply game-night profile (frame-fight)
+local INDOOR_NIGHT_PROBE_POLLS = msToPolls(500)     -- passive readback (detect G1R revert)
+local OUTDOOR_STABLE_POLL_INTERVAL = msToPolls(500) -- stably outside: throttle IsUnderRoof checks
 
 -- Discovery mode (Slice 1): read-only UDS instrumentation; no sky writes.
 local DISCOVERY_MODE    = false
@@ -2048,7 +2053,7 @@ local function pass()
     if rapidRestartWarmup == 2 then return end
 
     ingameWarmupPolls = ingameWarmupPolls + 1
-    local warmupTarget = INGAME_WARMUP_POLLS + ((rapidRestartWarmup == 1) and 50 or 0)
+    local warmupTarget = INGAME_WARMUP_POLLS + ((rapidRestartWarmup == 1) and RAPID_RESTART_EXTRA_WARMUP_POLLS or 0)
     if ingameWarmupPolls < warmupTarget then return end
 
     local uds = findUds()

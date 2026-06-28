@@ -21,11 +21,15 @@ Player `Engine.ini` tuning for max performance — Lumen off, shadows off, reduc
 _Avoid_: max perf mode, darkness tweaks
 
 **Indoor Sky Dimming**:
-While the player is **Inside** (`IsUnderRoof=true`), the mod dims **sky contribution** toward a unified dark-cave feel — not a global sky flip or moonlit aesthetic. **Day Game Clock:** crushed skylight multipliers + `SetSettings` dim bundle. **Night Game Clock:** clear day crush, native night + torches, skylight/moon brightness lifts — **no exposure writes** (see **Lever Boundaries**). When **Outside**, day baseline is restored via **Sky Transition**. Local light sources (torches, fires) stay at vanilla brightness. **F7** toggle off = **instant** day restore (manual escape hatch; no blend). Default enabled.
+While the player is **Inside** (`IsUnderRoof=true`) and **Mod Control Mode** is **Auto**, the mod dims **sky contribution** toward a unified dark-cave feel — not a global sky flip or moonlit aesthetic. **Day Game Clock:** crushed skylight multipliers + `SetSettings` dim bundle. **Night Game Clock:** clear day crush, native night + torches, skylight/moon brightness lifts — **no exposure writes** (see **Lever Boundaries**). When **Outside** in **Auto**, day baseline is restored via **Sky Transition**. Local light sources (torches, fires) stay at vanilla brightness.
 _Avoid_: indoor night override, moonlit night mode
 
+**Mod Control Mode**:
+Player override via **F7** (sole shipped keybind for this mod), cycling **Auto** → **Always On** → **Always Off** → **Auto**. **Auto** (default): mod active; **Inside Detection** drives dimming — outdoor baseline outside, **Indoor Sky Dimming** inside. **Always On**: mod active; **ignore Inside Detection** — apply indoor dimming profile everywhere (open world included); **indoor_day** vs **indoor_night** follows **Game Clock** (same split as **Auto** indoors), **instant** on clock change. **Always Off**: mod inactive — **instant** day restore (`G1R_DAY_RESTORE_*`), no indoor writes; sole player-facing manual path to vanilla sky (F12 spike key removed). F7 is the manual escape when the gate is wrong or the player wants forced dim/vanilla sky. **Any F7 mode change is instant** — no **Sky Transition** on mode switch; blends remain gate-only in **Auto**. **Boot default:** `config.lua` `CONTROL_MODE` (`"auto"` | `"always_on"` | `"always_off"`); legacy `ENABLED` maps `true`→`auto`, `false`→`always_off`. **F7 mid-session** changes mode in memory only — **no disk persistence**; UE4SS reload or new session resets to `config.lua`. **Same session:** mode persists across map loads / fast travel; load hooks re-apply according to current mode (not forced reset to **Auto**). **Feedback:** each F7 press logs the new mode to console; boot banner includes current mode (no on-screen HUD).
+_Avoid_: F7 on/off, enabled flag, toggle state
+
 **Extra Interior Exposure**:
-G1R graphics user setting mapped to UDS **`Exposure Bias in Interior`**. **Owned by the player** while indoors — the mod must not write this field on the indoor poll path (day or night). Brightness tuning uses skylight, `NightBrightness`, sun/moon multipliers, and `SetSettings` intensity instead. Outdoor restore and F12 may reset exposure to vanilla baseline.
+G1R graphics user setting mapped to UDS **`Exposure Bias in Interior`**. **Owned by the player** while indoors — the mod must not write this field on the indoor poll path (day or night). Brightness tuning uses skylight, `NightBrightness`, sun/moon multipliers, and `SetSettings` intensity instead. Outdoor restore and **Always Off** reset exposure to vanilla baseline.
 _Avoid_: interior exposure mod, exposure crush
 
 **Transition Perceived Brightness**:
@@ -43,7 +47,7 @@ _Avoid_: previous state, rollback target
 **Lever Boundaries**:
 Hard rules for what Slice 3 may write. Source of truth: `Scripts/main.lua` CONFIG + apply functions (`applyIndoorProfile`, `applyNightIndoorClear`, `applyDayRestore`). **v3.5.1 / Slice 6d (HITL accepted).**
 
-| Category | Field / lever | Indoor day | Indoor night | Outdoor leave / F7 off / F12 |
+| Category | Field / lever | Indoor day | Indoor night | Outdoor leave / Always Off |
 |----------|---------------|------------|--------------|------------------------------|
 | **Forbidden (never)** | `Time of Day` (raw UDS) | — | — | — |
 | **Forbidden (never)** | Torch / local light actors | — | — | — |
@@ -62,7 +66,7 @@ Hard rules for what Slice 3 may write. Source of truth: `Scripts/main.lua` CONFI
 | **Direct UDS** | `Moon Light Intensity Mult in Interiors` | — | **1.27** | restore |
 
 **Accepted Indoor Profile (v3.5.1 / Slice 6d)**:
-HITL-accepted values in `Scripts/main.lua` CONFIG — day: `G1R_SETTINGS_INDOOR_DAY_PROFILE` + `G1R_DIRECT_INDOOR_DAY_WRITES` + skylight mult **0.46** (Slice 6d +10%; no day hue); night: `applyNightIndoorClear` + `G1R_NIGHT_INDOOR_BRIGHTNESS_WRITES` + `G1R_SETTINGS_INDOOR_NIGHT_SKYLIGHT_HUE`. Outdoor restore: `G1R_DAY_RESTORE_*` / F12.
+HITL-accepted values in `Scripts/main.lua` CONFIG — day: `G1R_SETTINGS_INDOOR_DAY_PROFILE` + `G1R_DIRECT_INDOOR_DAY_WRITES` + skylight mult **0.46** (Slice 6d +10%; no day hue); night: `applyNightIndoorClear` + `G1R_NIGHT_INDOOR_BRIGHTNESS_WRITES` + `G1R_SETTINGS_INDOOR_NIGHT_SKYLIGHT_HUE`. Outdoor restore: `G1R_DAY_RESTORE_*` via outdoor leave or **Always Off** (no F12 spike key).
 
 **Implementation Lever**:
 Multi-write bundle on `Ultra_Dynamic_Sky_C` — **`SetSettings`** (`UltraDynamicSkySettings`), **sky light multipliers**, **`Apply Interior Adjustments`**, and direct **sun / directional** fields. **Not** routine exposure writes indoors (see **Extra Interior Exposure**). Controller: `Gothic_Ultra_Dynamic_Controller_C` syncs sky but lever writes target UDS actor. ~~Time of Day~~ rejected (Slice 2c).
@@ -84,7 +88,7 @@ Any enclosed playable space where the player should receive Indoor Sky Dimming �
 _Avoid_: interior, enclosed area
 
 **Inside Detection**:
-How the mod decides the player is Inside before blending. UDS Player Occlusion inactive in G1R (Slice 2a). **Accepted gate (Slice 2b):** `EnvironmentManagerCharacterStatics:IsUnderRoof(playerPawn)` — false outdoor, true in New Camp house HITL. F8 also probes `IndoorDetectionComponent` (`DetectionConfidence`; `bDetectedIsIndoor` stuck false). Ship fallback: F7 manual toggle.
+How the mod decides the player is Inside before blending. UDS Player Occlusion inactive in G1R (Slice 2a). **Accepted gate (Slice 2b):** `EnvironmentManagerCharacterStatics:IsUnderRoof(playerPawn)` — false outdoor, true in New Camp house HITL. Snapshot helpers also probe `IndoorDetectionComponent` (`DetectionConfidence`; `bDetectedIsIndoor` stuck false). Ship fallback: **Mod Control Mode** **Always On** or **Always Off** when the gate is wrong.
 _Avoid_: occlusion check, indoor trigger
 
 **Discovery Protocol**:
@@ -92,8 +96,8 @@ Three in-game poses on the same UDS actor: (1) outdoor daytime, occlusion ~0 —
 _Avoid_: property scan, UDS dump
 
 **Discovery Mode**:
-Temporary instrumentation in `Scripts/main.lua`: `DEBUG` logging plus a snapshot keybind (F8) that prints filtered UDS candidate fields to the UE4SS console. Read-only — no sky writes during discovery. Removed or gated off once the Implementation Lever is identified.
-_Avoid_: dump script, prototype mod
+Temporary instrumentation in `Scripts/main.lua`: when `DISCOVERY_MODE = true`, extra **DEBUG** console logging on poll and **Gate Stability** events (read-only — no sky writes). **No in-game keybinds** and **no spike keys** (F8–F12 retired); snapshot/spike helpers may remain unwired for dev reference. Ship player control is **F7** only.
+_Avoid_: dump script, prototype mod, F8 snapshot
 
 **Pose 3 Procedure**:
 Reach nighttime reference via in-game sleep/wait (bed, fire, or G1R wait) until ~02:00, then return to the pose-2 indoor spot and snapshot. No cheat time-set; Game Clock advances normally.
@@ -104,15 +108,15 @@ When discovery shows multiple properties differing between pose 2 (day-indoors) 
 _Avoid_: tie-break, winner rule
 
 **Occlusion Diagnostic**:
-Slice 2a pass: extended read-only snapshots (outdoor vs confirmed indoor, same session) to determine whether UDS Player Occlusion is **alive** (`Running` true and at least one field moves) or **dead** (pivot Inside Detection to G1R native signal; manual F7 as ship fallback).
-_Avoid_: occlusion debug, F8 dump
+Slice 2a pass: extended read-only snapshots (outdoor vs confirmed indoor, same session) to determine whether UDS Player Occlusion is **alive** (`Running` true and at least one field moves) or **dead** (pivot Inside Detection to G1R native signal; manual **Mod Control Mode** as ship fallback).
+_Avoid_: occlusion debug, snapshot dump
 
 **Gate Stability**:
-Debounce before arming an enter **Sky Transition**. After the first `IsUnderRoof` flip, the gate must still agree at timed checkpoints (same poll interval). Any disagreement resets the window. **Asymmetric (Slice 6d):** leaving **stable indoor** → outdoor confirms in **1s** (bias toward light); entering indoor from outdoor keeps **1s / 2s / 3s** checkpoints. Prevents doorway/threshold flicker from triggering a blend while making outdoor exit feel responsive. Applies only to inside/outside changes — not **F7** (instant), not game-clock `indoor_day` ↔ `indoor_night` swaps (instant).
+Debounce before arming an enter **Sky Transition**. After the first `IsUnderRoof` flip, the gate must still agree at timed checkpoints (same poll interval). Any disagreement resets the window. **Asymmetric (Slice 6d):** leaving **stable indoor** → outdoor confirms in **1s** (bias toward light); entering indoor from outdoor keeps **1s / 2s / 3s** checkpoints. Prevents doorway/threshold flicker from triggering a blend while making outdoor exit feel responsive. Applies only to inside/outside changes in **Auto** — not **Mod Control Mode** changes (instant), not game-clock `indoor_day` ↔ `indoor_night` swaps (instant).
 _Avoid_: debounce, hysteresis, gate delay
 
 **Apply Strategy**:
-Poll `IsUnderRoof` every `PASS_MS` (default 100 ms). Modes: `indoor_day` (game clock daytime), `indoor_night` (TOD ≥2000 or ≤600), `outdoor`. **Inside/outside changes:** **Gate Stability** must pass before arming a profile change — **1s** when leaving stable indoor, **3s** (1s/2s/3s checkpoints) when entering indoor. **Slice 6b+ (shipped):** armed → **Sky Transition** enter (~4s linear lerp of allowed levers; `TRANSITION_ENTER_MS`); gate flip during pending or active enter → ~1s fast revert to **Last Stable Profile**. **Game-clock-only changes** while **Inside** (`indoor_day` ↔ `indoor_night`): **instant** profile swap (typically once per day via sleep/wait; acceptable one-time spike). **F7** off / on: instant restore or re-poll (no blend). `indoor_night` may still refresh ~2s when stably indoors (frame-fight). Outdoor leave: via blend with exposure reset when fully outdoor. When `IsUnderRoof` unavailable, log once and hold state; pending Gate Stability resets after the active checkpoint window elapses unavailability.
+Poll `IsUnderRoof` every 1 s (fixed `PASS_MS` in `main.lua`) when **Mod Control Mode** is **Auto**. Modes: `indoor_day` (game clock daytime), `indoor_night` (TOD ≥2000 or ≤600), `outdoor`. **Inside/outside changes:** **Gate Stability** must pass before arming a profile change — **1s** when leaving stable indoor, **3s** (1s/2s/3s checkpoints) when entering indoor. **Slice 6b+ (shipped):** armed → **Sky Transition** enter (~4s linear lerp of allowed levers; `TRANSITION_ENTER_MS`); gate flip during pending or active enter → ~1s fast revert to **Last Stable Profile**. **Game-clock-only changes** while **Inside** (`indoor_day` ↔ `indoor_night`): **instant** profile swap (typically once per day via sleep/wait; acceptable one-time spike). **Mod Control Mode** change: **instant** apply or restore (no blend). `indoor_night` may still refresh ~2s when stably indoors (frame-fight). Outdoor leave: via blend with exposure reset when fully outdoor. When `IsUnderRoof` unavailable, log once and hold state; pending Gate Stability resets after the active checkpoint window elapses unavailability. **Always On:** poll **Game Clock** only; always apply indoor profile (`indoor_day` / `indoor_night`, instant swap on clock change). **Always Off:** no poll writes. **Map load / fast travel (same session):** retain current **Mod Control Mode**; post-load hook re-applies per mode (**Always Off** → day restore; **Always On** → forced indoor; **Auto** → gate re-poll). **Boot / first write:** all active modes respect ingame warmup + stable-ready gates before first sky write (**Always Off** skips writes).
 _Avoid_: frame hook, tick hook
 
 ## Flagged ambiguities
