@@ -82,7 +82,7 @@ Before zipping, align these:
 
 **Current shipped (update when you release):**
 
-- Mod: `v3.6.2-outdoorpoll`
+- Mod: `v3.6.3-1spoll`
 - MaxPerf config: Engine.ini **v13**
 - Last full pack: Jun 2026 → `G1R_IndoorNight_NexusPack.zip`
 
